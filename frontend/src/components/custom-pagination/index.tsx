@@ -8,6 +8,9 @@ import {
   PaginationPrevious
 } from '@/components/shadcn/pagination'
 
+const ELLIPSIS_START = 'ellipsis-start'
+const ELLIPSIS_END = 'ellipsis-end'
+
 interface CustomPaginationProps {
   totalPages: number
   currentPage: number
@@ -26,7 +29,7 @@ const CustomPagination = ({
 
     const pages: (string | number)[] = [1]
 
-    if (currentPage > 3) pages.push('...')
+    if (currentPage > 3) pages.push(ELLIPSIS_START)
 
     for (
       let i = Math.max(2, currentPage - 1);
@@ -36,7 +39,7 @@ const CustomPagination = ({
       pages.push(i)
     }
 
-    if (currentPage < totalPages - 2) pages.push('...')
+    if (currentPage < totalPages - 2) pages.push(ELLIPSIS_END)
 
     pages.push(totalPages)
 
@@ -52,8 +55,8 @@ const CustomPagination = ({
   }
 
   const renderPaginationItems = () => {
-    return generatePageNumbers().map((page, index) => (
-      <PaginationItem key={index}>
+    return generatePageNumbers().map(page => (
+      <PaginationItem key={page}>
         {typeof page === 'number' ? (
           <PaginationLink
             href="#"

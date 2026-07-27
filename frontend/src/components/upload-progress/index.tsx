@@ -80,9 +80,9 @@ const GlobalUploadProgress = () => {
         </Button>
       </div>
       {showModalContent
-        ? uploadNames.map((item, index) =>
+        ? uploadNames.map(item =>
             item.canceled ? null : (
-              <div key={index} className="mb-4 p-4">
+              <div key={item.name} className="mb-4 p-4">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="w-1/2 truncate">{item.name}</span>
                   <div className="flex items-center gap-2">

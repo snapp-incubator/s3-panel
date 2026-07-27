@@ -1,6 +1,6 @@
 import type { QueryKey } from '@tanstack/react-query'
 
-type FunctionQueryKey = (...args: any[]) => QueryKey
+type FunctionQueryKey = (...args: never[]) => QueryKey
 
 type KeysObject = Record<string, FunctionQueryKey>
 
@@ -11,7 +11,7 @@ export const createKeyStore = <B extends string, K extends KeysObject>(
   const newKeysObject: Partial<K> = {}
 
   Object.keys(keysObject).forEach(key => {
-    newKeysObject[key as keyof K] = ((...args: any[]) => {
+    newKeysObject[key as keyof K] = ((...args: never[]) => {
       let filteredKeys: QueryKey = []
 
       if (keysObject[key]) {
