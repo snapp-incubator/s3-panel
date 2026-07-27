@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { type EffectCallback, useEffect, useRef, useState } from 'react'
 
-const useEffectOnce = (effect: () => void | (() => void)) => {
-  const effectFn = useRef<() => void | (() => void)>(effect)
-  const destroyFn = useRef<void | (() => void)>(undefined)
+const useEffectOnce = (effect: EffectCallback) => {
+  const effectFn = useRef<EffectCallback>(effect)
+  const destroyFn = useRef<ReturnType<EffectCallback>>(undefined)
   const effectCalled = useRef(false)
   const rendered = useRef(false)
   const [, setVal] = useState<number>(0)

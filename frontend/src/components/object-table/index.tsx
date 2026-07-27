@@ -18,10 +18,15 @@ import DeleteObject from './delete-object'
 import DownloadObject from './download-object'
 import type { TObjectTablesProps } from './objectTables.types'
 
+const OBJECT_SKELETON_ROWS = Array.from(
+  { length: 6 },
+  (_, index) => `object-skeleton_${index}`
+)
+
 const ObjectSkeleton = () => {
-  return new Array(6).fill('').map((_, index) => {
+  return OBJECT_SKELETON_ROWS.map(id => {
     return (
-      <TableRow key={`item_${index}`}>
+      <TableRow key={id}>
         <TableCell>
           <Skeleton className="h-4 w-full" />
         </TableCell>

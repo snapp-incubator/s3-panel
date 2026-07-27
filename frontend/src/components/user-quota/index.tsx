@@ -11,6 +11,11 @@ import { calculateValue } from '@/lib/utils'
 
 import { Card, CardContent, CardTitle } from '../shadcn/card'
 
+const QUOTA_SKELETON_ITEMS = Array.from(
+  { length: 3 },
+  (_, index) => `quota-skeleton_${index}`
+)
+
 export default function UserQuota() {
   const {
     data: userQuota,
@@ -23,8 +28,8 @@ export default function UserQuota() {
 
   const renderLoadingState = () => (
     <div className="my-6 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-      {new Array(3).fill('').map((_, index) => (
-        <Fragment key={`item_${index}`}>
+      {QUOTA_SKELETON_ITEMS.map(id => (
+        <Fragment key={id}>
           <Skeleton className="h-2 w-[150px] rounded-lg" />
           <Skeleton className="h-4 w-[250px] rounded-lg" />
         </Fragment>

@@ -74,7 +74,7 @@ export default function BucketObjects() {
         .split('/')
         .filter(Boolean)
         .map((segment, _index, arr) => {
-          const pathUpTo = arr.slice(0, _index + 1).join('/') + '/'
+          const pathUpTo = `${arr.slice(0, _index + 1).join('/')}/`
           return { name: segment, path: pathUpTo }
         })
     : []

@@ -7,9 +7,14 @@ interface IBucketCardSkeletonProps {
 export default function BucketCardSkeleton({
   count
 }: IBucketCardSkeletonProps) {
-  return Array.from({ length: count }, (_, index) => (
+  const skeletonIds = Array.from(
+    { length: count },
+    (_, index) => `bucket-card-skeleton_${index}`
+  )
+
+  return skeletonIds.map(id => (
     <div
-      key={index}
+      key={id}
       className="flex min-w-[300px] flex-col gap-4 rounded-xl border bg-card p-5"
     >
       <div className="flex items-start gap-3">
