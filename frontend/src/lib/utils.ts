@@ -2,6 +2,7 @@ import { redirect } from '@tanstack/react-router'
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
+import usePanelSession from '@/hooks/usePanelSession'
 import useS3Credentials from '@/hooks/useS3Credentials'
 
 export function cn(...inputs: ClassValue[]) {
@@ -81,8 +82,19 @@ export function timeAgo(dateStr: string): string {
   }
 }
 
+/**
+ * Route guard for both authentication modes.
+ *
+ * In `iam` mode "logged in" means an OIDC session the server established, not
+ * credentials the user typed, so the guard has to ask the right store — reading
+ * only the credential store would bounce every signed-in user back to a login
+ * screen they have no credentials for.
+ */
 export function handleAuthRedirect(to: string, shouldBeAuthenticated = true) {
-  const isLogin = useS3Credentials.getState().isLogin()
+  const panel = usePanelSession.getState()
+  const isLogin = panel.isIAMMode()
+    ? panel.isAuthenticated()
+    : useS3Credentials.getState().isLogin()
 
   if (shouldBeAuthenticated && !isLogin) {
     throw redirect({ to }) // Redirect if user is not logged in but should be

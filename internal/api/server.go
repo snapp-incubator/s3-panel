@@ -17,8 +17,10 @@ import (
 	echoSwagger "github.com/swaggo/echo-swagger"
 	"go.uber.org/zap"
 
+	"github.com/snapp-incubator/S3-Panel/internal/auth"
 	"github.com/snapp-incubator/S3-Panel/internal/cache"
 	"github.com/snapp-incubator/S3-Panel/internal/config"
+	"github.com/snapp-incubator/S3-Panel/internal/control"
 	"github.com/snapp-incubator/S3-Panel/internal/health"
 	"github.com/snapp-incubator/S3-Panel/internal/storage"
 	"github.com/snapp-incubator/S3-Panel/internal/storage/ceph"
@@ -34,6 +36,13 @@ type Server struct {
 	logger        *zap.Logger
 	Router        *echo.Echo
 	regionTargets map[string]*url.URL
+
+	// Set only in AuthModeIAM. auth identifies the user, control answers what
+	// they may reach, and credentials caches the short-lived keys object calls
+	// are signed with.
+	auth        *auth.Authenticator
+	control     *control.Client
+	credentials *credentialCache
 }
 
 func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Config, logger *zap.Logger) (*Server, error) {
@@ -45,6 +54,10 @@ func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Co
 	}
 
 	if err := s.buildRegionTargets(); err != nil {
+		return nil, err
+	}
+
+	if err := s.registerIAMMode(ctx); err != nil {
 		return nil, err
 	}
 
@@ -63,6 +76,34 @@ func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Co
 	return s, nil
 }
 
+// registerIAMMode wires the OIDC login and the control-endpoint client.
+//
+// Failures here are fatal rather than degrading: in AuthModeIAM these are the
+// only things that identify a user and decide what they may reach, so a panel
+// that started without them would serve every request unauthenticated.
+func (s *Server) registerIAMMode(ctx context.Context) error {
+	if !s.Config.Server.IsIAMMode() {
+		s.logger.Info("### Auth mode: s3 (users sign in with their own S3 credentials) ###")
+		return nil
+	}
+	s.logger.Info("### Auth mode: iam (users sign in with OIDC) ###")
+
+	authenticator, err := auth.New(ctx, s.Config.OIDC)
+	if err != nil {
+		return fmt.Errorf("iam auth mode: %w", err)
+	}
+	s.auth = authenticator
+
+	controlClient, err := control.New(s.Config.ObjectStorage.ControlURL, s.Config.ObjectStorage.STSURL, 0)
+	if err != nil {
+		return fmt.Errorf("iam auth mode: %w", err)
+	}
+	s.control = controlClient
+	s.credentials = newCredentialCache()
+
+	return nil
+}
+
 func (s *Server) registerCephRepository() {
 	s.logger.Info("### Registering Ceph Repository ###")
 	s.store = ceph.NewCephObjectStorage()
@@ -77,6 +118,13 @@ func (s *Server) registerCache() {
 }
 
 func (s *Server) initializeCache() error {
+	// The cache maps an S3 access key to a RADOS uid, which only the s3 auth mode
+	// needs: in iam mode the user is identified by their OIDC session and the
+	// object credentials are minted per request.
+	if s.Config.Server.IsIAMMode() {
+		s.logger.Info("### Cache initialization skipped (iam auth mode) ###")
+		return nil
+	}
 	s.logger.Info("### Initializing Cache ###")
 	radosClient, err := ceph.NewRadosClient(s.Config.ObjectStorage.URL, s.Config.ObjectStorage.AccessKeyAdmin, s.Config.ObjectStorage.SecretKeyAdmin)
 	if err != nil {
@@ -110,6 +158,8 @@ func frontendMiddleware() echo.MiddlewareFunc {
 			p := c.Request().URL.Path
 			return strings.HasPrefix(p, "/api") ||
 				strings.HasPrefix(p, "/s3/api") ||
+				// The OIDC callback must reach its handler, not the SPA.
+				strings.HasPrefix(p, "/auth") ||
 				strings.HasPrefix(p, "/health") ||
 				strings.HasPrefix(p, "/docs")
 		},
@@ -120,6 +170,17 @@ func (s *Server) registerRoutes() {
 	s.Router.GET("/health", health.HandleHealth)
 	s.Router.GET("/docs/*", echoSwagger.WrapHandler)
 
+	// How the SPA learns which login flow to present.
+	s.Router.GET("/api/config", s.HandleConfig())
+	s.Router.GET("/s3/api/config", s.HandleConfig())
+
+	// Login endpoints live OUTSIDE the API group: that group carries the static
+	// bearer-token middleware, which would reject the identity provider's
+	// callback (it arrives with no Authorization header and cannot be given one).
+	if s.auth != nil {
+		s.auth.RegisterRoutes(s.Router)
+	}
+
 	// Serve the API under both /api and /s3/api. The bundled frontend calls
 	// /s3/api (a convention inherited from the central panel router); direct API
 	// clients and the swagger docs use /api.
@@ -128,10 +189,17 @@ func (s *Server) registerRoutes() {
 }
 
 func (s *Server) registerAPIGroup(prefix string) {
-	apiRoutes := s.Router.Group(prefix,
-		s.CORSMiddleware(),
-		s.AuthMiddleware(),
-	)
+	// The two auth modes gate the API differently: a static bearer token proves
+	// the caller is the panel, an OIDC session proves which person is asking.
+	guard := s.AuthMiddleware()
+	if s.auth != nil {
+		guard = s.auth.RequireSession()
+	}
+
+	// injectObjectCredentials runs after the guard, so it always has a session to
+	// mint against, and before every handler, so they all bind the same
+	// credentials from the same place.
+	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard, s.injectObjectCredentials())
 
 	apiRoutes.OPTIONS("/*", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
@@ -144,29 +212,88 @@ func (s *Server) registerAPIGroup(prefix string) {
 	// reverse-proxied to that region's backend.
 	region := s.regionRouter()
 
+	// In iam mode the panel signs object calls with a credential it obtained on
+	// the user's behalf, which makes it the enforcement point. The permission
+	// gate is attached to the GROUP rather than to each handler so a route added
+	// later inherits the check instead of having to remember it. In s3 mode these
+	// are no-ops: the gateway is still the authority there.
 	apiRoutesBuckets := apiRoutes.Group("/bucket", region)
 	{
-		apiRoutesBuckets.GET("/list", s.HandleBucketList())
-		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota())
-		apiRoutesBuckets.POST("/create", s.HandleBucketCreate)
-		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete())
+		apiRoutesBuckets.GET("/list", s.bucketListHandler())
+		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota(), s.requireBucketPermission(permRead))
+		apiRoutesBuckets.POST("/create", s.bucketCreateHandler())
+		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner))
+		if s.Config.Server.IsIAMMode() {
+			apiRoutesBuckets.GET("/detail", s.HandleIAMBucketDetail(), s.requireBucketPermission(permRead))
+		}
 	}
 
 	apiRoutesObjects := apiRoutes.Group("/object", region)
 	{
-		apiRoutesObjects.GET("/list", s.HandleObjectList())
-		apiRoutesObjects.POST("/upload", s.HandleObjectUpload())
-		apiRoutesObjects.GET("/download", s.HandleObjectDownload())
-		apiRoutesObjects.GET("/head", s.HandleObjectHead())
-		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete())
-		apiRoutesObjects.GET("/share", s.HandleObjectShare())
+		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead))
+		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite))
+		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.requireBucketPermission(permRead))
+		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.requireBucketPermission(permRead))
+		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite))
+		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.requireBucketPermission(permRead))
 	}
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)
 	{
-		apiRoutesUsers.GET("/quota", s.HandleUserQuota())
-		apiRoutesUsers.GET("/id", s.HandleUserIdentification())
+		apiRoutesUsers.GET("/quota", s.userQuotaHandler())
+		apiRoutesUsers.GET("/id", s.userIdentificationHandler())
 	}
+}
+
+// userIdentificationHandler answers "who am I" from whichever identity the
+// active mode actually has: a RADOS user in s3 mode, the OIDC session in iam
+// mode. The minted credential in iam mode belongs to a short-lived subuser, so
+// resolving it back to a gateway user would name the session, not the person.
+func (s *Server) userIdentificationHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return s.HandleIAMUserIdentification()
+	}
+	return s.HandleUserIdentification()
+}
+
+// userQuotaHandler reports per-user storage quota, which only exists in s3 mode.
+// In iam mode a user has no single gateway account to carry a quota — their
+// access is a set of grants across buckets that may live in different tenants
+// and regions — so the panel reports per-bucket quota on the detail page
+// instead.
+func (s *Server) userQuotaHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusNotImplemented,
+				"per-user quota does not apply in iam auth mode; see per-bucket quota on /bucket/detail")
+		}
+	}
+	return s.HandleUserQuota()
+}
+
+// bucketCreateHandler disables bucket creation in iam mode.
+//
+// A minted credential belongs to no tenant, so a bucket created with it would
+// land somewhere other than the team's namespace. Provisioning belongs to
+// whatever creates the tenants in the first place, not to this panel.
+func (s *Server) bucketCreateHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusForbidden,
+				"bucket creation is not available in iam auth mode; provision buckets through your storage operator")
+		}
+	}
+	return s.HandleBucketCreate
+}
+
+// bucketListHandler picks the listing for the active auth mode. They differ in
+// kind, not just in shape: the s3 one lists what the caller's own credentials
+// own, the iam one lists what an authorization service says they may reach.
+func (s *Server) bucketListHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return s.HandleIAMBucketList()
+	}
+	return s.HandleBucketList()
 }
 
 func (s *Server) registerPruner() {

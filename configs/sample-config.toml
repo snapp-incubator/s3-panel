@@ -4,8 +4,68 @@ level = "debug"
 [server]
 address = "0.0.0.0"
 port = "8080"
+
+# How a caller is identified.
+#
+#   "s3"  (default) — the user supplies their own S3 access key and secret key.
+#                     The gateway is the only authorization layer, so a user sees
+#                     exactly the buckets their own account owns. auth_token
+#                     below is a single static bearer token in front of the whole
+#                     API; it is not a user identity.
+#
+#   "iam"           — the user signs in with OIDC, and an S3-compatible control
+#                     endpoint answers which buckets they may use and with what
+#                     permission. Requires the [oidc] block and
+#                     object_storage_config.control_url below.
+auth_mode = "s3"
+
 auth_enabled = "true"
 auth_key_lookup = "header:Authorization"
 auth_token = "XXX"
 
 serve_frontend = true
+
+# The region this instance serves directly. Requests whose "region" header names
+# another region are reverse-proxied to that region's backend.
+# region = "teh-1"
+# [server.region_endpoints]
+# teh-2 = "https://s3-panel.teh-2.example"
+
+[object_storage_config]
+# The gateway. Object operations always go here.
+url = "https://s3.example.com"
+access_key = ""
+secret_key = ""
+
+# --- auth_mode = "iam" only -------------------------------------------------
+#
+# A second S3-compatible endpoint used ONLY for authorization metadata: which
+# buckets the caller may use, their usage, and their bucket policies. Splitting
+# it from `url` is what lets an authorization service answer across every region
+# at once without ever standing in the path of object bytes.
+# control_url = "https://iam.example.com/s3"
+#
+# Where short-lived object credentials come from (AWS STS GetSessionToken).
+# Defaults to control_url with its last path segment replaced by "sts".
+# sts_url = "https://iam.example.com/sts"
+
+# --- auth_mode = "iam" only -------------------------------------------------
+# [oidc]
+# issuer_url = "https://keycloak.example.com/realms/snapp"
+# client_id = "s3-panel"
+# client_secret = ""
+# redirect_url = "https://s3-panel.example.com/auth/callback"
+#
+# Base64 of 32 random bytes: openssl rand -base64 32
+# cookie_key = ""
+# cookie_name = "s3panel_session"
+# cookie_secure = true            # set false only for plain-HTTP local dev
+#
+# scopes = ["email", "profile"]   # "openid" is always included
+# groups_claim = "groups"
+#
+# Groups whose members get the panel's admin view. The control endpoint still
+# decides what they may actually see; this only reveals the UI.
+# admin_groups = ["Cloud"]
+#
+# post_login_redirect = "/"

@@ -1,7 +1,7 @@
 {
   "modification_date": "Modification Date",
   "access": "Access",
-  "bucket_size": "Bucket Size",
+  "bucket_size": "Size",
   "object_count": "Object Count",
   "objects": "Objects",
   "modified": "Modified",
@@ -158,41 +158,33 @@
   "generation": "Generation",
   "memory_gb": "Memory",
   "ssd_gb": "SSD",
-
   "total_team_help": "Total number of pods quota for the team.",
   "cpu_quota_team_help": "There is a limits amount for CPU, which means the entire team can request this much limits, and there is a guarantied requests amount that is calculated based on these limits (requests = limits * 0.3))",
   "ns_cpu_quota_team_help": "there is a limits amount for CPU, which means the entire team can request this much limits, and there is a guarantied requests amount that is calculated based on these limits (requests = limits * 0.3))",
   "memory_quota_team_help": "The defined quota for the entire team for the amount of limits.memory.",
   "storage_quota_team_help": "The defined quota for the entire team for the amount of requests.storage.",
   "ephemeral_storage_quota_team_help": "The defined quota for the entire team for the amount of requests.ephemeral-storage.",
-
   "chart_cpu_allocated_help": "This is the total amount of requests.cpu that the pods have requested (including running pods, pods in the process of being created, or those in a crash-loop) within the Team.",
   "chart_cpu_limit_help": "The defined quota for the entire team for the amount of limits.cpu.",
   "chart_cpu_used_help": "The total amount of Limits.cpu that pods have requested in the all the namespaces of a team.",
   "chart_cpu_usage_help": "The actual amount that the total pods in the all of the namespace in a team are currently using.",
-
   "ns_memory_quota_team_help": "The quota defined in the ResourceQuota for the namespace for limits.memory.",
   "ns_storage_quota_team_help": "The defined quota for the namespace for the amount of requests.storage.",
   "ns_ephemeral_storage_quota_team_help": "The defined quota for the namespace for the amount of requests.ephemeral-storage.",
-
   "ns_chart_cpu_allocated_help": "This is the total amount of requests.cpu that the pods have requested (including running pods, pods in the process of being created, or those in a crash-loop) within the Team.",
   "ns_chart_cpu_limit_help": " The total amount of Limits.cpu that pods have requested in the same namespace.",
   "ns_chart_cpu_used_help": "The total amount of Limits.cpu that pods have requested in the same namespace.",
   "ns_chart_cpu_usage_help": "The actual amount that the total pods in the namespace are currently using.",
-
   "chart_memory_allocated_help": " This is the total amount of requests.memory that the pods have requested (including running pods, pods in the process of being created, or those in a crash-loop) within the Team.",
   "chart_memory_limit_help": "The defined quota for the entire team for the amount of limits.memory.",
   "chart_memory_used_help": "The total amount of Limits.memory that pods have requested in the all the namespaces of a team.",
   "chart_memory_usage_help": "The actual amount that the total pods in the all of the namespace in a team are currently using.",
-
   "ns_chart_memory_allocated_help": "This is the total amount of requests.memory that the pods have requested (including running pods, pods in the process of being created, or those in a crash-loop) within the same namespace.",
   "ns_chart_memory_limit_help": "The quota defined in the ResourceQuota for the namespace for limits.memory.",
   "ns_chart_memory_used_help": "The total amount of Limits.memory that pods have requested in the same namespace.",
   "ns_chart_memory_usage_help": "The actual amount that the total pods in the namespace are currently using.",
-
   "chart_storage_allocated_help": "This is the total amount of storage that have requested for creating the volumes.",
   "chart_storage_used_help": "The defined quota for the entire team for the amount of requests.storage.",
-
   "ns_chart_storage_allocated_help": "This is the total amount of storage that have requested for creating the volumes.",
   "ns_chart_storage_used_help": "The defined quota for the namespace for the amount of requests.storage.",
   "farvardin": "Farvardin",
@@ -207,9 +199,26 @@
   "day": "Day",
   "bahman": "Bahman",
   "esfand": "Esfand",
-
   "invalid_data_format": "Invalid data format: expected an object",
   "data_empty_204": "No Data available",
   "cost_trend_no_data": "Cost trends do not have any data.",
-  "error_processing_data": "Error processing data"
+  "error_processing_data": "Error processing data",
+  "sign_in_title": "Sign in to continue",
+  "sign_in_description": "This panel uses your organization account. You will be redirected to sign in, then brought back here.",
+  "sign_in_button": "Sign in",
+  "sign_out": "Sign out",
+  "bucket_permissions": "Permissions",
+  "granted_via_team": "via team {team}",
+  "bucket_detail": "Bucket detail",
+  "bucket_policy": "Bucket policy",
+  "no_bucket_policy": "This bucket has no policy attached.",
+  "bucket_policy_denied": "You do not have permission to read this bucket's policy.",
+  "objects_count": "Objects",
+  "bucket_quota": "Quota",
+  "no_quota": "No limit",
+  "admin_view": "Admin view",
+  "admin_view_hint": "You are seeing every bucket, not only the ones granted to you.",
+  "read_only_bucket": "Read only",
+  "all_regions": "All regions",
+  "no_accessible_buckets": "You do not have access to any buckets yet. Ask a team admin to grant you access."
 }

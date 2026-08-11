@@ -8,6 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/aws/smithy-go v1.27.7
 	github.com/ceph/go-ceph v0.40.0
+	github.com/coreos/go-oidc/v3 v3.20.0
 	github.com/go-playground/validator v9.31.0+incompatible
 	github.com/knadh/koanf/parsers/toml v0.1.0
 	github.com/knadh/koanf/providers/env v1.1.0
@@ -21,6 +22,7 @@ require (
 	github.com/tidwall/pretty v1.2.1
 	go.uber.org/automaxprocs v1.6.0
 	go.uber.org/zap v1.28.0
+	golang.org/x/oauth2 v0.36.0
 )
 
 require (
@@ -40,6 +42,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-openapi/jsonpointer v0.23.1 // indirect
 	github.com/go-openapi/jsonreference v0.21.6 // indirect
 	github.com/go-openapi/spec v0.22.6 // indirect

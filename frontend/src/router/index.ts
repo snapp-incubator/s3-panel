@@ -10,6 +10,9 @@ const BucketsPage = lazy(() => import('@/pages/objectStorage/s3Bucket/buckets'))
 const BucketObjectsPage = lazy(
   () => import('@/pages/objectStorage/s3Bucket/buckets/bucket-objects')
 )
+const BucketDetailPage = lazy(
+  () => import('@/pages/objectStorage/s3Bucket/buckets/bucket-detail')
+)
 
 export const HomeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -41,11 +44,21 @@ export const BucketObjectsRoute = createRoute({
   beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
 })
 
+// Bucket detail is iam-mode only: the object count, size and policy it shows
+// are served by the control endpoint, which s3 mode does not have.
+export const BucketDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/object-storage/s3-bucket/buckets/$bucketName/detail',
+  component: BucketDetailPage,
+  beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
+})
+
 const routeTree = rootRoute.addChildren([
   HomeRoute,
   s3BucketRoute,
   BucketsRoute,
-  BucketObjectsRoute
+  BucketObjectsRoute,
+  BucketDetailRoute
 ])
 
 export const router = createRouter({ routeTree })

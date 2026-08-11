@@ -7,8 +7,47 @@
 </p>
 
 S3 Panel is a self-service web panel for S3-compatible object storage (Ceph RGW):
-authenticate with S3 credentials and manage buckets and objects — list, upload,
-download, delete and share — and view quotas.
+authenticate and manage buckets and objects — list, upload, download, delete and
+share — and view quotas.
+
+## Authentication modes
+
+`server.auth_mode` selects how a caller is identified.
+
+**`s3` (default)** — the user supplies their own S3 access key and secret key.
+The gateway is the only authorization layer, so a user sees exactly the buckets
+their own account owns. This is the historical behaviour and is unchanged.
+
+**`iam`** — the user signs in with OIDC, and an S3-compatible *control endpoint*
+answers which buckets they may use and with what permission. The panel speaks
+only standard protocols — OIDC, S3 and STS — so any service implementing them can
+back it.
+
+```
+browser ──OIDC──▶ panel ──S3 (ListBuckets, ?policy, ?stats)──▶ control endpoint
+                    │  ──STS GetSessionToken─────────────────▶
+                    ▼
+              short-lived credential
+                    │
+browser/panel ──────┴──S3 objects──▶ gateway   (the control endpoint is not in this path)
+```
+
+What this adds over `s3` mode:
+
+- **Buckets from every region in one list**, including buckets the user does not
+  own but has been granted access to.
+- **Per-bucket permissions** (`read` / `write` / `owner`), shown in the UI and
+  enforced server-side on every data-plane route.
+- **A bucket detail page** with object count, size, quota and the bucket policy.
+- **An admin view** for members of a configured group.
+
+Object bytes never pass through the control endpoint: it authorizes and vends a
+short-lived credential, and the client signs its object calls straight to the
+gateway.
+
+Bucket creation and per-user quota are unavailable in `iam` mode — a minted
+credential belongs to no tenant, and a user has no single gateway account to
+carry a quota. See `configs/sample-config.toml` for the full configuration.
 
 This is a monorepo:
 
