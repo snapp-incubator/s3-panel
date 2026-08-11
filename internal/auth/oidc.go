@@ -23,6 +23,10 @@ const stateCookieName = "s3panel_oidc_state"
 // stateTTL bounds how long a login may sit unfinished.
 const stateTTL = 10 * time.Minute
 
+// DefaultSessionTTL is how long a sign-in lasts when unconfigured. It bounds the
+// session independently of the access token, which is refreshed underneath it.
+const DefaultSessionTTL = 12 * time.Hour
+
 // Authenticator runs the OIDC flow and owns the session cookie.
 type Authenticator struct {
 	cfg      config.OIDCConfig
@@ -183,7 +187,12 @@ func (a *Authenticator) Me(c echo.Context) error {
 	})
 }
 
-// Load reads and validates the session cookie.
+// Load reads the session cookie, refreshing the access token underneath it when
+// that token has lapsed.
+//
+// Without the refresh the sign-in would end whenever the access token did —
+// five minutes on a default Keycloak — which is not a session, it is a
+// stopwatch. The sign-in itself ends at SessionExpiresAt.
 func (a *Authenticator) Load(c echo.Context) (Session, bool) {
 	cookie, err := c.Cookie(a.cookieName())
 	if err != nil || cookie.Value == "" {
@@ -193,18 +202,63 @@ func (a *Authenticator) Load(c echo.Context) (Session, bool) {
 	if err != nil || session.Expired() {
 		return Session{}, false
 	}
-	return session, true
+	if !session.TokenExpired() {
+		return session, true
+	}
+
+	refreshed, err := a.refresh(c.Request().Context(), session)
+	if err != nil {
+		// The refresh token is spent or revoked: the sign-in is over, and the
+		// user has to authenticate again.
+		return Session{}, false
+	}
+	// Persist the rotated tokens, or the next request refreshes again — and with
+	// refresh-token rotation on, replaying a spent token can invalidate the whole
+	// chain at the provider.
+	if err := a.Save(c, refreshed); err != nil {
+		return refreshed, true
+	}
+	return refreshed, true
+}
+
+// refresh exchanges the refresh token for a new access token, keeping the
+// identity claims already established at sign-in.
+func (a *Authenticator) refresh(ctx context.Context, prior Session) (Session, error) {
+	if prior.RefreshToken == "" {
+		return Session{}, fmt.Errorf("session has no refresh token")
+	}
+	token, err := a.oauth.TokenSource(ctx, &oauth2.Token{
+		RefreshToken: prior.RefreshToken,
+		Expiry:       prior.ExpiresAt,
+	}).Token()
+	if err != nil {
+		return Session{}, fmt.Errorf("refresh access token: %w", err)
+	}
+
+	next := prior
+	next.AccessToken = token.AccessToken
+	next.ExpiresAt = token.Expiry
+	if token.RefreshToken != "" {
+		// Providers with rotation return a new one; keeping the old would break
+		// the next refresh.
+		next.RefreshToken = token.RefreshToken
+	}
+	return next, nil
 }
 
 // Save seals a session into the cookie.
+//
+// The cookie's lifetime follows the SIGN-IN, not the access token: a cookie that
+// expired with the access token would drop the refresh token on the floor and
+// end the session minutes after it began.
 func (a *Authenticator) Save(c echo.Context, s Session) error {
 	value, err := a.codec.Encode(s)
 	if err != nil {
 		return err
 	}
-	ttl := time.Until(s.ExpiresAt)
+	ttl := time.Until(s.SessionExpiresAt)
 	if ttl <= 0 {
-		ttl = time.Hour
+		ttl = DefaultSessionTTL
 	}
 	a.setCookie(c, a.cookieName(), value, ttl)
 	return nil
@@ -221,18 +275,16 @@ func (a *Authenticator) sessionFromToken(idToken *oidc.IDToken, token *oauth2.To
 	}
 
 	session := Session{
-		Subject:     idToken.Subject,
-		Email:       stringClaim(claims, "email"),
-		Name:        stringClaim(claims, "name"),
-		Groups:      stringsClaim(claims, a.groupsClaim()),
-		AccessToken: token.AccessToken,
-		IDToken:     idToken.Subject, // placeholder, replaced below
-		ExpiresAt:   token.Expiry,
-	}
-	// Keep the raw ID token, not the subject: it is what identifies the user to
-	// a downstream service when no access token is issued.
-	if raw, ok := token.Extra("id_token").(string); ok {
-		session.IDToken = raw
+		Subject:      idToken.Subject,
+		Email:        stringClaim(claims, "email"),
+		Name:         stringClaim(claims, "name"),
+		Groups:       stringsClaim(claims, a.groupsClaim()),
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		ExpiresAt:    token.Expiry,
+		// How long the person stays signed in, independent of how often the
+		// access token underneath is rotated.
+		SessionExpiresAt: time.Now().Add(a.sessionTTL()),
 	}
 	if session.Email == "" {
 		// Some providers only put the address in preferred_username.
@@ -249,6 +301,14 @@ func (a *Authenticator) cookieName() string {
 		return a.cfg.CookieName
 	}
 	return config.DefaultCookieName
+}
+
+// sessionTTL is how long a sign-in lasts before re-authentication.
+func (a *Authenticator) sessionTTL() time.Duration {
+	if a.cfg.SessionTTL > 0 {
+		return a.cfg.SessionTTL
+	}
+	return DefaultSessionTTL
 }
 
 func (a *Authenticator) groupsClaim() string {

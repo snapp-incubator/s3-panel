@@ -38,17 +38,30 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
 
     try {
       const config = await fetchPanelConfig()
-      set({ authMode: config.auth_mode, loginUrl: config.login_url ?? '' })
 
       if (config.auth_mode !== 'iam') {
-        set({ session: null })
+        set({
+          authMode: config.auth_mode,
+          loginUrl: config.login_url ?? '',
+          session: null
+        })
 
         return
       }
 
       // A 401 here is the ordinary "not signed in yet" state, not a failure.
       const session = await fetchPanelSession()
-      set({ session })
+
+      // authMode and session are published TOGETHER, in one update. The app
+      // un-gates rendering as soon as authMode is known, and the router runs its
+      // route guards immediately — so publishing authMode first would have the
+      // guard read a session that has not arrived yet and bounce a signed-in
+      // user straight back to the login screen.
+      set({
+        authMode: config.auth_mode,
+        loginUrl: config.login_url ?? '',
+        session
+      })
     } catch {
       // Fall back to the historical behaviour rather than blocking the app: an
       // older backend has no /api/config, and it only speaks s3-credential login.

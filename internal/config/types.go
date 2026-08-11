@@ -1,5 +1,7 @@
 package config
 
+import "time"
+
 // Authentication modes.
 const (
 	// AuthModeS3 is the default: the user supplies their own S3 access key and
@@ -94,4 +96,8 @@ type OIDCConfig struct {
 	AdminGroups []string `json:"admin_groups" koanf:"admin_groups"`
 	// PostLoginRedirect is where the browser lands after a successful login.
 	PostLoginRedirect string `json:"post_login_redirect" koanf:"post_login_redirect"`
+	// SessionTTL is how long a sign-in lasts before the user must authenticate
+	// again. It is independent of the access token's lifetime, which is short
+	// (minutes) and refreshed underneath the session. Defaults to 12h.
+	SessionTTL time.Duration `json:"session_ttl" koanf:"session_ttl"`
 }

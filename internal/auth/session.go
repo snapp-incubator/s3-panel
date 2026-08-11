@@ -7,6 +7,8 @@
 package auth
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -24,20 +26,36 @@ import (
 // endpoint — the endpoint then answers for the person at the keyboard rather
 // than for an ambient service credential, so the panel never needs privileges of
 // its own.
+//
+// Two expiries, and the distinction matters. The access token typically lives
+// minutes (Keycloak defaults to five), while a person expects to stay signed in
+// for a working session. Tying the sign-in to the access token would sign users
+// out every few minutes, so the access token is refreshed underneath a session
+// that ends at SessionExpiresAt.
 type Session struct {
-	Subject     string    `json:"sub"`
-	Email       string    `json:"email,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Groups      []string  `json:"groups,omitempty"`
-	AccessToken string    `json:"access_token,omitempty"`
-	IDToken     string    `json:"id_token,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at"`
+	Subject      string   `json:"sub"`
+	Email        string   `json:"email,omitempty"`
+	Name         string   `json:"name,omitempty"`
+	Groups       []string `json:"groups,omitempty"`
+	AccessToken  string   `json:"access_token,omitempty"`
+	RefreshToken string   `json:"refresh_token,omitempty"`
+	// ExpiresAt is when the ACCESS TOKEN lapses and must be refreshed.
+	ExpiresAt time.Time `json:"expires_at"`
+	// SessionExpiresAt is when the sign-in itself ends and the user must
+	// authenticate again, no matter how many refreshes have happened.
+	SessionExpiresAt time.Time `json:"session_expires_at"`
 }
 
-// Expired reports whether the session is past its expiry, with a small leeway so
-// a request that is in flight when the token lapses is not rejected mid-call.
-func (s Session) Expired() bool {
+// TokenExpired reports whether the access token needs refreshing. The leeway
+// keeps a request that is in flight as the token lapses from being signed with
+// one that expires mid-call.
+func (s Session) TokenExpired() bool {
 	return !s.ExpiresAt.IsZero() && time.Now().After(s.ExpiresAt.Add(-30*time.Second))
+}
+
+// Expired reports whether the sign-in itself has ended.
+func (s Session) Expired() bool {
+	return !s.SessionExpiresAt.IsZero() && time.Now().After(s.SessionExpiresAt)
 }
 
 // IsAdmin reports whether the session holds one of the configured admin groups.
@@ -68,9 +86,19 @@ func (s Session) Display() string {
 	return "unknown"
 }
 
+// maxCookieBytes is the practical per-cookie ceiling browsers enforce. A cookie
+// over it is dropped SILENTLY: the server sets it, the browser discards it, and
+// every later request looks unauthenticated with nothing in any log to say why.
+const maxCookieBytes = 4096
+
 // CookieCodec seals a Session into the opaque cookie value and back.
+//
 // AES-256-GCM gives confidentiality and integrity in one primitive, so a
 // tampered cookie fails to open rather than yielding a forged identity.
+//
+// The payload is compressed before sealing. It carries two Keycloak JWTs, and
+// uncompressed those overflow the 4 KB cookie ceiling on their own — they are
+// base64-encoded JSON, which roughly halves.
 type CookieCodec struct {
 	aead cipher.AEAD
 }
@@ -101,17 +129,38 @@ func NewCookieCodec(keyB64 string) (*CookieCodec, error) {
 }
 
 // Encode seals a session.
+//
+// It refuses to produce a value the browser would drop, because that failure is
+// otherwise invisible: the login appears to succeed and the user lands back on
+// the sign-in page with no error anywhere.
 func (c *CookieCodec) Encode(s Session) (string, error) {
 	plaintext, err := json.Marshal(s)
 	if err != nil {
 		return "", fmt.Errorf("marshal session: %w", err)
 	}
+
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(plaintext); err != nil {
+		return "", fmt.Errorf("compress session: %w", err)
+	}
+	if err := zw.Close(); err != nil {
+		return "", fmt.Errorf("compress session: %w", err)
+	}
+
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return "", fmt.Errorf("generate nonce: %w", err)
 	}
-	sealed := c.aead.Seal(nonce, nonce, plaintext, nil)
-	return base64.RawURLEncoding.EncodeToString(sealed), nil
+	sealed := c.aead.Seal(nonce, nonce, compressed.Bytes(), nil)
+	encoded := base64.RawURLEncoding.EncodeToString(sealed)
+
+	if len(encoded) > maxCookieBytes {
+		return "", fmt.Errorf(
+			"session cookie would be %d bytes, over the %d-byte limit browsers enforce; "+
+				"the identity provider's tokens are unusually large", len(encoded), maxCookieBytes)
+	}
+	return encoded, nil
 }
 
 // Decode opens a sealed session. Any tampering, truncation or key change surfaces
@@ -125,13 +174,29 @@ func (c *CookieCodec) Decode(value string) (Session, error) {
 	if len(raw) < nonceSize {
 		return Session{}, fmt.Errorf("cookie is too short to contain a nonce")
 	}
-	plaintext, err := c.aead.Open(nil, raw[:nonceSize], raw[nonceSize:], nil)
+	compressed, err := c.aead.Open(nil, raw[:nonceSize], raw[nonceSize:], nil)
 	if err != nil {
 		return Session{}, fmt.Errorf("open cookie: %w", err)
 	}
+
+	zr, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return Session{}, fmt.Errorf("decompress session: %w", err)
+	}
+	defer zr.Close() //nolint:errcheck // read-only
+
+	plaintext, err := io.ReadAll(io.LimitReader(zr, maxSessionBytes))
+	if err != nil {
+		return Session{}, fmt.Errorf("decompress session: %w", err)
+	}
+
 	var s Session
 	if err := json.Unmarshal(plaintext, &s); err != nil {
 		return Session{}, fmt.Errorf("unmarshal session: %w", err)
 	}
 	return s, nil
 }
+
+// maxSessionBytes bounds decompression, so a crafted cookie cannot expand into
+// an unbounded allocation.
+const maxSessionBytes = 1 << 20

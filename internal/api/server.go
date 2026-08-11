@@ -196,10 +196,14 @@ func (s *Server) registerAPIGroup(prefix string) {
 		guard = s.auth.RequireSession()
 	}
 
-	// injectObjectCredentials runs after the guard, so it always has a session to
-	// mint against, and before every handler, so they all bind the same
-	// credentials from the same place.
-	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard, s.injectObjectCredentials())
+	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard)
+
+	// Storage credentials are attached only to the routes that actually sign a
+	// call to the gateway. Attaching them to the whole API would mint a
+	// credential just to render a bucket list — and would lock out an
+	// administrator who has every right to browse but no storage identity of
+	// their own to mint against. It is a no-op in s3 mode.
+	withCredentials := s.injectObjectCredentials()
 
 	apiRoutes.OPTIONS("/*", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
@@ -219,16 +223,20 @@ func (s *Server) registerAPIGroup(prefix string) {
 	// are no-ops: the gateway is still the authority there.
 	apiRoutesBuckets := apiRoutes.Group("/bucket", region)
 	{
+		// list and detail are answered entirely from the control endpoint, so
+		// they need no storage credential.
 		apiRoutesBuckets.GET("/list", s.bucketListHandler())
-		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota(), s.requireBucketPermission(permRead))
+		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota(), s.requireBucketPermission(permRead), withCredentials)
 		apiRoutesBuckets.POST("/create", s.bucketCreateHandler())
-		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner))
+		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner), withCredentials)
 		if s.Config.Server.IsIAMMode() {
 			apiRoutesBuckets.GET("/detail", s.HandleIAMBucketDetail(), s.requireBucketPermission(permRead))
 		}
 	}
 
-	apiRoutesObjects := apiRoutes.Group("/object", region)
+	// Everything under /object reaches the gateway, so every route here takes
+	// both the permission check and a credential.
+	apiRoutesObjects := apiRoutes.Group("/object", region, withCredentials)
 	{
 		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead))
 		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite))
@@ -240,7 +248,9 @@ func (s *Server) registerAPIGroup(prefix string) {
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)
 	{
-		apiRoutesUsers.GET("/quota", s.userQuotaHandler())
+		// In iam mode /quota is refused and /id answers from the session, so
+		// neither needs a storage credential.
+		apiRoutesUsers.GET("/quota", s.userQuotaHandler(), withCredentials)
 		apiRoutesUsers.GET("/id", s.userIdentificationHandler())
 	}
 }
