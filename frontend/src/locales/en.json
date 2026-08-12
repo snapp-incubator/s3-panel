@@ -220,5 +220,7 @@
   "admin_view_hint": "You are seeing every bucket, not only the ones granted to you.",
   "read_only_bucket": "Read only",
   "all_regions": "All regions",
-  "no_accessible_buckets": "You do not have access to any buckets yet. Ask a team admin to grant you access."
+  "no_accessible_buckets": "You do not have access to any buckets yet. Ask a team admin to grant you access.",
+  "read_only_panel": "Read-only",
+  "read_only_panel_hint": "This panel can browse and download, but cannot change anything in storage."
 }

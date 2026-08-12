@@ -31,6 +31,13 @@ snapp-object-store:
     # endpoint decides what they may reach).
     auth_mode: "s3"
 
+    # Refuse every operation that would modify the storage backend — uploads,
+    # deletes, bucket creation. Browsing and downloads still work. Set this on
+    # any instance pointed at storage it must not change (e.g. a staging panel
+    # reading a production gateway); it overrides per-bucket permissions, which
+    # a user may legitimately hold.
+    read_only: false
+
     # --- auth_mode: "iam" only ---------------------------------------------
     #
     # A second S3-compatible endpoint used only for authorization metadata:

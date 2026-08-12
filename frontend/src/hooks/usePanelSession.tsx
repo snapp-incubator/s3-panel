@@ -7,11 +7,14 @@ interface IPanelSessionStore {
   /** null until the panel config has been read. */
   authMode: TAuthMode | null
   loginUrl: string
+  /** Server refuses every mutating operation; hide the controls. */
+  readOnly: boolean
   session: IPanelSessionResponse | null
   loading: boolean
   /** Reads /api/config and, in iam mode, /auth/me. Safe to call repeatedly. */
   bootstrap: () => Promise<void>
   isIAMMode: () => boolean
+  isReadOnly: () => boolean
   isAuthenticated: () => boolean
   isAdmin: () => boolean
   logout: () => Promise<void>
@@ -29,6 +32,7 @@ interface IPanelSessionStore {
 const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   authMode: null,
   loginUrl: '',
+  readOnly: false,
   session: null,
   loading: false,
 
@@ -43,6 +47,7 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
         set({
           authMode: config.auth_mode,
           loginUrl: config.login_url ?? '',
+          readOnly: config.read_only === true,
           session: null
         })
 
@@ -60,6 +65,7 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
       set({
         authMode: config.auth_mode,
         loginUrl: config.login_url ?? '',
+        readOnly: config.read_only === true,
         session
       })
     } catch {
@@ -72,6 +78,7 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   },
 
   isIAMMode: () => get().authMode === 'iam',
+  isReadOnly: () => get().readOnly,
   isAuthenticated: () => get().session?.authenticated === true,
   isAdmin: () => get().session?.is_admin === true,
 

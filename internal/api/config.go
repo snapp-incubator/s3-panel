@@ -21,6 +21,9 @@ type ConfigResponse struct {
 	LoginURL string `json:"login_url,omitempty"`
 	// Region is the region this instance serves directly.
 	Region string `json:"region,omitempty"`
+	// ReadOnly reports that every mutating operation is refused, so the UI can
+	// hide the controls rather than offer actions that will 403.
+	ReadOnly bool `json:"read_only"`
 }
 
 // HandleConfig serves GET /config.
@@ -36,6 +39,7 @@ func (s *Server) HandleConfig() echo.HandlerFunc {
 		resp := ConfigResponse{
 			AuthMode: s.Config.Server.AuthMode,
 			Region:   s.Config.Server.Region,
+			ReadOnly: s.Config.Server.IsReadOnly(),
 		}
 		if resp.AuthMode == "" {
 			resp.AuthMode = config.AuthModeS3

@@ -13,6 +13,11 @@ export interface IPanelConfigResponse {
   /** Where to send the browser to start an OIDC login. Empty in `s3` mode. */
   login_url?: string
   region?: string
+  /**
+   * Every mutating operation is refused server-side. The UI hides the controls
+   * rather than offering actions that will 403.
+   */
+  read_only?: boolean
 }
 
 export interface IPanelSessionResponse {

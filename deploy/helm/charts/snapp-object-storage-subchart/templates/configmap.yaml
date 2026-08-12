@@ -13,6 +13,7 @@ data:
     address = {{ .Values.config.address | default "0.0.0.0" | quote }}
     port = {{ .Values.config.port | default 8080 | quote }}
     auth_mode = {{ .Values.config.auth_mode | default "s3" | quote }}
+    read_only = {{ dig "read_only" false .Values.config }}
     auth_enabled = {{ .Values.config.auth_enabled | default "false" | quote }}
     auth_key_lookup = "header:Authorization"
     auth_token = {{ .Values.auth_token | default "" | quote }}

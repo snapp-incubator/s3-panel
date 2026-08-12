@@ -205,6 +205,11 @@ func (s *Server) registerAPIGroup(prefix string) {
 	// their own to mint against. It is a no-op in s3 mode.
 	withCredentials := s.injectObjectCredentials()
 
+	// A single gate in front of everything that could change the storage
+	// backend. It outranks the permission checks below on purpose: holding
+	// write on a bucket does not matter if the instance itself is read-only.
+	readOnly := s.refuseWhenReadOnly()
+
 	apiRoutes.OPTIONS("/*", func(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	})
@@ -227,8 +232,8 @@ func (s *Server) registerAPIGroup(prefix string) {
 		// they need no storage credential.
 		apiRoutesBuckets.GET("/list", s.bucketListHandler())
 		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota(), s.requireBucketPermission(permRead), withCredentials)
-		apiRoutesBuckets.POST("/create", s.bucketCreateHandler())
-		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner), withCredentials)
+		apiRoutesBuckets.POST("/create", s.bucketCreateHandler(), readOnly)
+		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner), withCredentials, readOnly)
 		if s.Config.Server.IsIAMMode() {
 			apiRoutesBuckets.GET("/detail", s.HandleIAMBucketDetail(), s.requireBucketPermission(permRead))
 		}
@@ -239,10 +244,10 @@ func (s *Server) registerAPIGroup(prefix string) {
 	apiRoutesObjects := apiRoutes.Group("/object", region, withCredentials)
 	{
 		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead))
-		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite))
+		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite), readOnly)
 		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.requireBucketPermission(permRead))
 		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.requireBucketPermission(permRead))
-		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite))
+		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite), readOnly)
 		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.requireBucketPermission(permRead))
 	}
 

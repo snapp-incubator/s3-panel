@@ -33,6 +33,16 @@ type ServerConfig struct {
 	AuthKeyLookup string `json:"auth_key_lookup" koanf:"auth_key_lookup"`
 	AuthToken     string `json:"auth_token"      koanf:"auth_token"`
 	DownloadPath  string `json:"download_path"   koanf:"download_path"`
+	// ReadOnly refuses every operation that would modify the storage backend —
+	// uploads, deletes, bucket creation and share links — while leaving browsing
+	// and downloads intact.
+	//
+	// It exists for deployments pointed at storage the panel must not change: a
+	// staging instance reading a production gateway, or an audit/read-only
+	// console. Permission checks alone are not sufficient there, because a user
+	// may legitimately hold write or owner on a bucket and the panel would honour
+	// it. This is a deployment-level statement that overrides all of them.
+	ReadOnly bool `json:"read_only" koanf:"read_only"`
 	// ServeFrontend controls whether the embedded SPA is served. Disable it for
 	// API-only instances. Defaults to true.
 	ServeFrontend bool `json:"serve_frontend"  koanf:"serve_frontend"`
@@ -49,6 +59,9 @@ type ServerConfig struct {
 // IsIAMMode reports whether the panel authenticates users with OIDC rather than
 // S3 credentials.
 func (s ServerConfig) IsIAMMode() bool { return s.AuthMode == AuthModeIAM }
+
+// IsReadOnly reports whether every mutating operation is refused.
+func (s ServerConfig) IsReadOnly() bool { return s.ReadOnly }
 
 type ServerCorsConfig struct {
 	AllowedOrigins []string `json:"allowed_origins" koanf:"allowed_origins"`

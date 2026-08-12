@@ -32,6 +32,9 @@ export default function Buckets() {
 
   const isIAMMode = usePanelSession(state => state.authMode === 'iam')
   const isAdmin = usePanelSession(state => state.session?.is_admin === true)
+  // The server refuses mutating calls outright; hiding the controls keeps the
+  // UI honest rather than offering buttons that 403.
+  const isReadOnly = usePanelSession(state => state.readOnly)
 
   // The two modes list different things: s3 lists what the caller's own
   // credentials own (and can report quota inline), iam lists what an
@@ -114,6 +117,18 @@ export default function Buckets() {
           gateway account to carry one, so quota is per bucket on the detail page. */}
       {isIAMMode ? null : <UserQuota />}
 
+      {isReadOnly ? (
+        <div
+          data-test="read-only-banner"
+          className="mt-4 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm"
+        >
+          <span className="font-medium">{t('read_only_panel')}</span>
+          <span className="ml-2 text-muted-foreground">
+            {t('read_only_panel_hint')}
+          </span>
+        </div>
+      ) : null}
+
       {isIAMMode && isAdmin ? (
         <div
           data-test="admin-view-banner"
@@ -137,7 +152,7 @@ export default function Buckets() {
         />
         {/* A minted credential belongs to no tenant, so a bucket created with it
             would land outside the team's namespace. */}
-        {isIAMMode ? null : (
+        {isIAMMode || isReadOnly ? null : (
           <Button size="sm" onClick={() => setOpenCreate(true)}>
             {t('create_bucket')}
           </Button>
