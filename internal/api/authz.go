@@ -49,16 +49,60 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				if b.Name != bucket && b.S3Name != bucket && b.RealName != bucket {
 					continue
 				}
-				if b.Can(permission) {
-					return next(c)
+				if !b.Can(permission) {
+					return echo.NewHTTPError(http.StatusForbidden,
+						"you do not have "+permission+" access to "+bucket)
 				}
-				return echo.NewHTTPError(http.StatusForbidden,
-					"you do not have "+permission+" access to "+bucket)
+				// Rewrite the bucket to the gateway's own spelling before the
+				// handler binds it.
+				//
+				// The panel addresses a bucket by its control-plane identifier
+				// ("<tenant>--<bucket>"), which is unique across regions and
+				// URL-safe. The gateway has never heard of that name — it wants
+				// "<tenant>:<bucket>" — so handing the identifier straight to the
+				// S3 client makes every object call fail with NoSuchBucket.
+				//
+				// Done here because this is where the bucket has just been
+				// resolved: one lookup answers both "may you?" and "what is it
+				// actually called?", and no handler has to remember either.
+				if b.S3Name != "" && b.S3Name != bucket {
+					rewriteBucketParam(c, b.S3Name)
+				}
+				return next(c)
 			}
 
 			// Not in the caller's list. Reported as absent rather than forbidden so
 			// the endpoint cannot be used to enumerate buckets.
 			return echo.NewHTTPError(http.StatusNotFound, "no such bucket")
+		}
+	}
+}
+
+// rewriteBucketParam replaces the request's bucket parameter in place.
+//
+// It rewrites both the URL query and, for multipart uploads, the parsed form —
+// the upload handler binds `bucket` from the form rather than the query, so
+// changing only one of them fixes listing and leaves uploads broken.
+func rewriteBucketParam(c echo.Context, name string) {
+	req := c.Request()
+
+	// Echo memoizes the parsed query on first access, and this middleware has
+	// already read `bucket` to resolve it — so rewriting only RawQuery leaves
+	// every later QueryParam call returning the stale value. Update the cached
+	// values too, and keep RawQuery coherent for anything reading the raw URL.
+	if q := c.QueryParams(); q.Has("bucket") {
+		q.Set("bucket", name)
+		req.URL.RawQuery = q.Encode()
+	}
+
+	// Only touch the form if it has already been parsed; forcing a parse here
+	// would consume a multipart body the handler still needs to read.
+	if req.PostForm != nil && req.PostForm.Has("bucket") {
+		req.PostForm.Set("bucket", name)
+	}
+	if req.MultipartForm != nil && req.MultipartForm.Value != nil {
+		if _, ok := req.MultipartForm.Value["bucket"]; ok {
+			req.MultipartForm.Value["bucket"] = []string{name}
 		}
 	}
 }
