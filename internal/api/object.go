@@ -443,4 +443,3 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 		return c.JSON(http.StatusOK, url)
 	}
 }
-
