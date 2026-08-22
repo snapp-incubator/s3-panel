@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -181,5 +183,172 @@ func TestUnknownBucketReadsAsAbsent(t *testing.T) {
 	httpErr, ok := err.(*echo.HTTPError)
 	if !ok || httpErr.Code != http.StatusNotFound {
 		t.Fatalf("error = %v, want 404 so the endpoint is not an enumeration oracle", err)
+	}
+}
+
+// TestMultipartUploadBucketIsRewritten covers the path that broke uploads while
+// listing kept working.
+//
+// An upload is multipart/form-data, and nothing has parsed it when the
+// authorization middleware runs. The rewrite used to skip an unparsed form to
+// avoid consuming the body, which meant it never fired for uploads at all: the
+// handler parsed the body itself and bound the CONTROL-PLANE bucket name, which
+// the gateway has never heard of. The user saw a 422 "no such bucket" on upload
+// for a bucket they could browse perfectly well.
+func TestMultipartUploadBucketIsRewritten(t *testing.T) {
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	if err := w.WriteField("bucket", "okd4_teh_1__payments--exports"); err != nil {
+		t.Fatalf("write field: %v", err)
+	}
+	fw, err := w.CreateFormFile("files", "hello.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte("payload")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/objects/upload", body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	c := echo.New().NewContext(req, httptest.NewRecorder())
+
+	rewriteBucketParam(c, "okd4_teh_1__payments:exports")
+
+	// This is exactly how the handler reads it.
+	if got := c.FormValue("bucket"); got != "okd4_teh_1__payments:exports" {
+		t.Fatalf("handler would upload to %q, which the gateway does not know", got)
+	}
+
+	// And the file must survive the early parse, or the upload has nothing to send.
+	form, err := c.MultipartForm()
+	if err != nil {
+		t.Fatalf("multipart form after rewrite: %v", err)
+	}
+	if len(form.File["files"]) != 1 {
+		t.Fatalf("got %d files after the rewrite parsed the body; the upload payload was lost",
+			len(form.File["files"]))
+	}
+}
+
+// multipartUpload builds an upload request shaped exactly like the panel's own:
+// the bucket travels as a form field, never in the query string.
+func multipartUpload(t *testing.T, bucket string) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	w := multipart.NewWriter(body)
+	if err := w.WriteField("bucket", bucket); err != nil {
+		t.Fatalf("write field: %v", err)
+	}
+	fw, err := w.CreateFormFile("files", "hello.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write([]byte("payload")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/object/upload", body)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	return req
+}
+
+// TestUploadIsPermissionChecked is the security half of the upload bug.
+//
+// The middleware read the bucket only from the query string. An upload carries
+// it in a multipart field, so the lookup returned "" and the middleware took its
+// "this route names no bucket, nothing to check" path — handing the upload
+// straight to the handler UNCHECKED. Any signed-in user could write to any
+// bucket the panel's credential could reach, including ones they hold no write
+// on and ones they were never granted at all.
+//
+// The stub grants read only, so an upload must be refused.
+func TestUploadIsPermissionChecked(t *testing.T) {
+	s, done := iamModeServer(t)
+	defer done()
+
+	reached := false
+	handler := func(c echo.Context) error {
+		reached = true
+		return c.NoContent(http.StatusOK)
+	}
+
+	req := multipartUpload(t, "okd4_teh_1__payments--exports")
+	rec := httptest.NewRecorder()
+	c := withSession(echo.New().NewContext(req, rec))
+
+	err := s.requireBucketPermission(permWrite)(handler)(c)
+
+	if reached {
+		t.Fatal("upload reached the handler without a write check — any user could write to any bucket")
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusForbidden {
+		t.Fatalf("got %v, want 403 — the caller holds read, not write", err)
+	}
+}
+
+// TestUploadToAnUngrantedBucketIsRefused checks the same path for a bucket the
+// caller was never granted at all. It must read as absent rather than forbidden,
+// so the endpoint cannot be used to enumerate buckets.
+func TestUploadToAnUngrantedBucketIsRefused(t *testing.T) {
+	s, done := iamModeServer(t)
+	defer done()
+
+	reached := false
+	handler := func(c echo.Context) error { reached = true; return c.NoContent(http.StatusOK) }
+
+	req := multipartUpload(t, "someone-elses-bucket")
+	c := withSession(echo.New().NewContext(req, httptest.NewRecorder()))
+
+	err := s.requireBucketPermission(permWrite)(handler)(c)
+
+	if reached {
+		t.Fatal("upload to an ungranted bucket reached the handler")
+	}
+	he, ok := err.(*echo.HTTPError)
+	if !ok || he.Code != http.StatusNotFound {
+		t.Fatalf("got %v, want 404", err)
+	}
+}
+
+// TestResolvedBucketIsPublishedForLaterMiddleware guards the contract the
+// per-tenant credential depends on.
+//
+// The credential middleware picks WHICH tenant to mint for by reading the bucket
+// this middleware resolved. If that stops being published — or if the credential
+// middleware is hoisted back onto the route group, where echo runs it before
+// this one — the tenant silently reads as empty, every user falls back to a
+// single credential per session, and everyone whose buckets span tenants gets
+// "access denied" on all but one of them.
+func TestResolvedBucketIsPublishedForLaterMiddleware(t *testing.T) {
+	s, done := iamModeServer(t)
+	defer done()
+
+	var tenant string
+	var found bool
+	handler := func(c echo.Context) error {
+		b, ok := resolvedBucket(c)
+		found = ok
+		tenant = b.Tenant
+		return c.NoContent(http.StatusOK)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/object/list?bucket=okd4_teh_1__payments--exports", nil)
+	c := withSession(echo.New().NewContext(req, httptest.NewRecorder()))
+
+	if err := s.requireBucketPermission(permRead)(handler)(c); err != nil {
+		t.Fatalf("requireBucketPermission: %v", err)
+	}
+	if !found {
+		t.Fatal("no resolved bucket was published; the credential middleware cannot know the tenant")
+	}
+	if tenant != "okd4_teh_1__payments" {
+		t.Fatalf("tenant = %q, want okd4_teh_1__payments", tenant)
 	}
 }

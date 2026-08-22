@@ -1,10 +1,14 @@
 package api
 
 import (
+	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+
+	"github.com/snapp-incubator/S3-Panel/internal/control"
 )
 
 // Permissions the control endpoint reports on a bucket.
@@ -32,10 +36,10 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				return next(c)
 			}
 
-			bucket := strings.TrimSpace(c.QueryParam("bucket"))
+			bucket := bucketParam(c)
 			if bucket == "" {
-				// Routes with no bucket parameter (the listing itself) are already
-				// scoped to the caller by the control endpoint.
+				// Routes that genuinely name no bucket (the listing itself) are
+				// already scoped to the caller by the control endpoint.
 				return next(c)
 			}
 
@@ -68,6 +72,12 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				if b.S3Name != "" && b.S3Name != bucket {
 					rewriteBucketParam(c, b.S3Name)
 				}
+
+				// Hand the resolved bucket to whatever runs next. The credential
+				// middleware needs its tenant, and this lookup already paid for the
+				// answer — repeating it there would mean a second round trip to the
+				// control endpoint on every object request.
+				c.Set(resolvedBucketKey, b)
 				return next(c)
 			}
 
@@ -95,14 +105,94 @@ func rewriteBucketParam(c echo.Context, name string) {
 		req.URL.RawQuery = q.Encode()
 	}
 
-	// Only touch the form if it has already been parsed; forcing a parse here
-	// would consume a multipart body the handler still needs to read.
-	if req.PostForm != nil && req.PostForm.Has("bucket") {
-		req.PostForm.Set("bucket", name)
+	// An upload arrives as multipart/form-data that nothing has parsed yet, so
+	// waiting for "already parsed" means never rewriting it at all: the handler
+	// then parses the raw body itself and binds the ORIGINAL control-plane name,
+	// which the gateway does not know — the upload fails with NoSuchBucket while
+	// listing the same bucket works.
+	//
+	// Parsing here is safe rather than destructive: ParseMultipartForm is
+	// idempotent, so the handler's own c.MultipartForm() and c.FormValue() reuse
+	// exactly what this parse produced instead of re-reading a consumed body.
+	if isMultipartForm(req) {
+		_ = req.ParseMultipartForm(multipartParseMemory)
+	}
+
+	// c.FormValue reads Form, the binder reads PostForm, and the file walk reads
+	// MultipartForm. All three are populated from the same body and any one of
+	// them can be the copy the handler happens to consult, so rewrite each.
+	for _, values := range []url.Values{req.Form, req.PostForm} {
+		if values != nil && values.Has("bucket") {
+			values.Set("bucket", name)
+		}
 	}
 	if req.MultipartForm != nil && req.MultipartForm.Value != nil {
 		if _, ok := req.MultipartForm.Value["bucket"]; ok {
 			req.MultipartForm.Value["bucket"] = []string{name}
 		}
 	}
+}
+
+// multipartParseMemory is how much of an upload is held in memory before the
+// rest spills to temporary files. It matches Echo's own default so parsing early
+// behaves exactly as the handler's later parse would have.
+const multipartParseMemory = 32 << 20
+
+// isMultipartForm reports whether the body is a multipart form, without reading
+// it.
+func isMultipartForm(r *http.Request) bool {
+	ct := r.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return false
+	}
+	return mediaType == "multipart/form-data"
+}
+
+// bucketParam reads the bucket a request targets, from wherever its route
+// carries it.
+//
+// Browsing routes put it in the query string; an upload puts it in a multipart
+// form field. Reading only the query returned "" for uploads, which sent this
+// middleware down its "names no bucket, nothing to check" path — so an upload
+// skipped the permission check ENTIRELY and never had its bucket rewritten to
+// the gateway spelling. The failed upload was the visible half of that; the
+// unchecked write was the dangerous half.
+func bucketParam(c echo.Context) string {
+	if v := strings.TrimSpace(c.QueryParam("bucket")); v != "" {
+		return v
+	}
+
+	// Only touch the body when it actually is a form. Calling FormValue on a JSON
+	// or empty body would be pointless here and needlessly parse it.
+	req := c.Request()
+	switch {
+	case isMultipartForm(req):
+		_ = req.ParseMultipartForm(multipartParseMemory)
+	case isURLEncodedForm(req):
+		_ = req.ParseForm()
+	default:
+		return ""
+	}
+	return strings.TrimSpace(c.FormValue("bucket"))
+}
+
+// isURLEncodedForm reports whether the body is a plain form post.
+func isURLEncodedForm(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil {
+		return false
+	}
+	return mediaType == "application/x-www-form-urlencoded"
+}
+
+// resolvedBucketKey is where requireBucketPermission leaves the bucket it
+// resolved, for later middleware in the same chain.
+const resolvedBucketKey = "iam.resolved_bucket"
+
+// resolvedBucket returns the bucket requireBucketPermission resolved for this
+// request, if it ran and found one.
+func resolvedBucket(c echo.Context) (control.Bucket, bool) {
+	b, ok := c.Get(resolvedBucketKey).(control.Bucket)
+	return b, ok
 }
