@@ -201,6 +201,31 @@ func (s *Server) HandleObjectList() echo.HandlerFunc {
 			return c.JSON(http.StatusBadRequest, storage.OperationErrWithMsg{Message: err.Error()})
 		}
 
+		// In iam mode this handler cannot take the admin path below, and does not
+		// need to.
+		//
+		// It cannot: the panel holds no RGW admin credential there — IAM does —
+		// so building an admin client fails outright ("access key not set") and
+		// the listing 422s before it ever reaches the gateway.
+		//
+		// It does not need to: the admin client exists only to resolve a uid and
+		// to confirm the bucket is one the caller owns. In iam mode the control
+		// endpoint has already decided the caller may read this bucket, and the
+		// authorization middleware has already rewritten it to the gateway's
+		// spelling. Re-deriving ownership from RGW would additionally get the
+		// WRONG answer: the caller's credential is a session under a tenant
+		// account, so "buckets this account owns" is not "buckets this person may
+		// see".
+		if s.Config.Server.IsIAMMode() {
+			objects, errObjectList := s.store.ObjectList(s.Config.ObjectStorage, req)
+			if errObjectList.Message != nil {
+				s.logger.Error(errObjectList.Message.Error())
+				return c.JSON(errObjectList.Code, storage.OperationErrWithMsg{Message: errObjectList.Message.Error()})
+			}
+			objects.TotalPages = totalPages(objects.TotalMatchedItems, int(req.MaxKeys))
+			return c.JSON(http.StatusOK, objects)
+		}
+
 		radosClient, err := ceph.NewRadosClient(s.Config.ObjectStorage.URL, s.Config.ObjectStorage.AccessKeyAdmin, s.Config.ObjectStorage.SecretKeyAdmin)
 		if err != nil {
 			return c.JSON(http.StatusUnprocessableEntity, storage.OperationErrWithMsg{Message: err.Error()})
@@ -418,3 +443,4 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 		return c.JSON(http.StatusOK, url)
 	}
 }
+
