@@ -25,3 +25,42 @@ snapp-object-store:
     #   region_endpoints:
     #     teh-2: http://s3-panel.apps.private.okd4.teh-2.snappcloud.io
     region_endpoints: {}
+
+    # How a caller is identified: "s3" (default, users supply their own S3
+    # credentials) or "iam" (users sign in with OIDC and an S3-compatible control
+    # endpoint decides what they may reach).
+    auth_mode: "s3"
+
+    # Refuse every operation that would modify the storage backend — uploads,
+    # deletes, bucket creation. Browsing and downloads still work. Set this on
+    # any instance pointed at storage it must not change (e.g. a staging panel
+    # reading a production gateway); it overrides per-bucket permissions, which
+    # a user may legitimately hold.
+    read_only: false
+
+    # --- auth_mode: "iam" only ---------------------------------------------
+    #
+    # A second S3-compatible endpoint used only for authorization metadata:
+    # which buckets the caller may use, their usage, and their bucket policies.
+    # Object bytes never pass through it.
+    control_url: ""
+    # Where short-lived object credentials come from (STS GetSessionToken).
+    # Defaults to control_url with its last path segment replaced by "sts".
+    sts_url: ""
+
+    oidc:
+      issuer_url: ""
+      client_id: ""
+      redirect_url: ""
+      cookie_name: "s3panel_session"
+      cookie_secure: true
+      groups_claim: "groups"
+      # Groups whose members get the admin view. The control endpoint still
+      # decides what they may actually see.
+      admin_groups: []
+      scopes: []
+      post_login_redirect: "/"
+      # client_secret and cookie_key are credentials: supply them as env vars
+      # from a Secret, not here.
+      #   s3panel_oidc__client_secret
+      #   s3panel_oidc__cookie_key      (openssl rand -base64 32)

@@ -7,6 +7,8 @@ import packageJson from './package.json'
 
 const PROJECT_NAME = 'snappCost'
 
+const DEV_BACKEND = process.env.VITE_DEV_BACKEND || 'http://localhost:8090'
+
 const VITE_APP_ENVIRONMENT = process.env.VITE_APP_ENVIRONMENT
 
 const IS_PRODUCTION_ENV = VITE_APP_ENVIRONMENT === 'production'
@@ -36,7 +38,20 @@ export default defineConfig({
     port: 8080,
     strictPort: true,
     host: true,
-    origin: 'http://0.0.0.0:8080'
+    origin: 'http://0.0.0.0:8080',
+    /**
+     * The SPA calls /api and /auth as same-origin relative paths and relies on
+     * the session cookie, so in dev they have to reach the Go backend through
+     * this origin. Without the proxy `iam` auth mode cannot work locally at all:
+     * /api/config and /auth/me 404 against the dev server and the app falls back
+     * to asking for S3 keys.
+     *
+     * Override the target with VITE_DEV_BACKEND when the backend is not on :8090.
+     */
+    proxy: {
+      '/api': { target: DEV_BACKEND, changeOrigin: true },
+      '/auth': { target: DEV_BACKEND, changeOrigin: true }
+    }
   },
   build: {
     rollupOptions: {

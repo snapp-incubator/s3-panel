@@ -2,10 +2,12 @@ import { useQuery } from '@tanstack/react-query'
 import { useDeferredValue, useEffect, useState } from 'react'
 import { useEffectOnce } from 'react-use'
 
+import { fetchIAMBuckets } from '@/api/panel'
 import { fetchBucketsQuota } from '@/api/s3'
 import { bucketsKeys } from '@/api/s3Keys'
 import { AlertMessage } from '@/components/alert-message'
 import BucketCard from '@/components/bucket-card'
+import IAMBucketCard from '@/components/bucket-card/iam-bucket-card'
 import CreateBucket from '@/components/create-bucket'
 import CustomPagination from '@/components/custom-pagination'
 import ErrorState from '@/components/error-state'
@@ -14,6 +16,7 @@ import SearchField from '@/components/search-field'
 import { Button } from '@/components/shadcn/button'
 import BucketCardSkeleton from '@/components/skeletons/BucketCardSkeleton'
 import UserQuota from '@/components/user-quota'
+import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
 
 export default function Buckets() {
@@ -27,6 +30,15 @@ export default function Buckets() {
   const deferredSearch = useDeferredValue(searchValue)
   const maxItems: number = 10
 
+  const isIAMMode = usePanelSession(state => state.authMode === 'iam')
+  const isAdmin = usePanelSession(state => state.session?.is_admin === true)
+  // The server refuses mutating calls outright; hiding the controls keeps the
+  // UI honest rather than offering buttons that 403.
+  const isReadOnly = usePanelSession(state => state.readOnly)
+
+  // The two modes list different things: s3 lists what the caller's own
+  // credentials own (and can report quota inline), iam lists what an
+  // authorization service says they may reach, across every region at once.
   const {
     data: buckets,
     isFetching,
@@ -34,7 +46,19 @@ export default function Buckets() {
     refetch
   } = useQuery({
     queryFn: () => fetchBucketsQuota(maxItems, page, deferredSearch),
-    queryKey: bucketsKeys.all(maxItems, page, deferredSearch)
+    queryKey: bucketsKeys.all(maxItems, page, deferredSearch),
+    enabled: !isIAMMode
+  })
+
+  const {
+    data: iamBuckets,
+    isFetching: iamFetching,
+    isError: iamError,
+    refetch: iamRefetch
+  } = useQuery({
+    queryFn: () => fetchIAMBuckets(maxItems, page, deferredSearch),
+    queryKey: ['iam-buckets', maxItems, page, deferredSearch],
+    enabled: isIAMMode
   })
 
   useEffectOnce(() => {
@@ -42,12 +66,34 @@ export default function Buckets() {
   })
 
   useEffect(() => {
-    if (buckets && initialTotalPages === null) {
-      setInitialTotalPages(buckets.total_pages)
+    const totalPages = isIAMMode
+      ? iamBuckets?.total_pages
+      : buckets?.total_pages
+
+    if (totalPages !== undefined && initialTotalPages === null) {
+      setInitialTotalPages(totalPages)
     }
-  }, [buckets, initialTotalPages])
+  }, [buckets, iamBuckets, isIAMMode, initialTotalPages])
 
   const returnBuckets = () => {
+    if (isIAMMode) {
+      if (iamBuckets?.items?.length) {
+        return iamBuckets.items.map(bucket => (
+          <IAMBucketCard
+            {...bucket}
+            key={`${bucket.region}/${bucket.bucket}`}
+          />
+        ))
+      }
+
+      return (
+        <AlertMessage
+          title={t('empty_buckets')}
+          message={t('no_accessible_buckets')}
+        />
+      )
+    }
+
     if (buckets?.items) {
       return buckets.items.map(bucket => (
         <BucketCard {...bucket} key={bucket.bucket} />
@@ -67,7 +113,34 @@ export default function Buckets() {
       <div className="flex flex-col justify-between gap-4 md:flex-row md:gap-0">
         <h2 className="text-3xl">{t('s3_bucket')}</h2>
       </div>
-      <UserQuota />
+      {/* Per-user quota is an s3-mode concept: in iam mode a user has no single
+          gateway account to carry one, so quota is per bucket on the detail page. */}
+      {isIAMMode ? null : <UserQuota />}
+
+      {isReadOnly ? (
+        <div
+          data-test="read-only-banner"
+          className="mt-4 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm"
+        >
+          <span className="font-medium">{t('read_only_panel')}</span>
+          <span className="ml-2 text-muted-foreground">
+            {t('read_only_panel_hint')}
+          </span>
+        </div>
+      ) : null}
+
+      {isIAMMode && isAdmin ? (
+        <div
+          data-test="admin-view-banner"
+          className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm"
+        >
+          <span className="font-medium">{t('admin_view')}</span>
+          <span className="ml-2 text-muted-foreground">
+            {t('admin_view_hint')}
+          </span>
+        </div>
+      ) : null}
+
       <span className="mt-2 block text-xl font-semibold">{t('buckets')}</span>
       <div className="mt-4 flex items-center justify-between">
         <SearchField
@@ -77,19 +150,27 @@ export default function Buckets() {
             setPage(1)
           }}
         />
-        <Button size="sm" onClick={() => setOpenCreate(true)}>
-          {t('create_bucket')}
-        </Button>
+        {/* A minted credential belongs to no tenant, so a bucket created with it
+            would land outside the team's namespace. */}
+        {isIAMMode || isReadOnly ? null : (
+          <Button size="sm" onClick={() => setOpenCreate(true)}>
+            {t('create_bucket')}
+          </Button>
+        )}
       </div>
 
-      {isError ? (
+      {(isIAMMode ? iamError : isError) ? (
         <div className="mt-20">
           <ErrorState />
         </div>
       ) : (
         <>
           <div className="mt-12 grid grid-cols-1 gap-6 lg:grid-cols-2 xl:grid-cols-3">
-            {isFetching ? <BucketCardSkeleton count={6} /> : returnBuckets()}
+            {(isIAMMode ? iamFetching : isFetching) ? (
+              <BucketCardSkeleton count={6} />
+            ) : (
+              returnBuckets()
+            )}
           </div>
           <div className="relative mt-5">
             {initialTotalPages && initialTotalPages > 1 && !searchValue ? (
@@ -105,7 +186,7 @@ export default function Buckets() {
       <CreateBucket
         open={openCreate}
         closeHandler={() => setOpenCreate(false)}
-        updateBuckets={refetch}
+        updateBuckets={isIAMMode ? iamRefetch : refetch}
       />
     </div>
   )

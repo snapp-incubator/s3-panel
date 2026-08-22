@@ -12,6 +12,8 @@ data:
     [server]
     address = {{ .Values.config.address | default "0.0.0.0" | quote }}
     port = {{ .Values.config.port | default 8080 | quote }}
+    auth_mode = {{ .Values.config.auth_mode | default "s3" | quote }}
+    read_only = {{ dig "read_only" false .Values.config }}
     auth_enabled = {{ .Values.config.auth_enabled | default "false" | quote }}
     auth_key_lookup = "header:Authorization"
     auth_token = {{ .Values.auth_token | default "" | quote }}
@@ -30,4 +32,29 @@ data:
     url = {{ .Values.config.url | default "" | quote }}
     access_key = {{ .Values.access_key | default "" | quote }}
     secret_key = {{ .Values.secret_key | default "" | quote }}
+{{- if .Values.config.control_url }}
+    control_url = {{ .Values.config.control_url | quote }}
+{{- end }}
+{{- if .Values.config.sts_url }}
+    sts_url = {{ .Values.config.sts_url | quote }}
+{{- end }}
+{{- if eq (.Values.config.auth_mode | default "s3") "iam" }}
+
+    [oidc]
+    issuer_url = {{ .Values.config.oidc.issuer_url | default "" | quote }}
+    client_id = {{ .Values.config.oidc.client_id | default "" | quote }}
+    {{- /* Secrets belong in a Secret, not a ConfigMap: set them via the
+           s3panel_oidc__client_secret / s3panel_oidc__cookie_key env vars. */}}
+    redirect_url = {{ .Values.config.oidc.redirect_url | default "" | quote }}
+    cookie_name = {{ .Values.config.oidc.cookie_name | default "s3panel_session" | quote }}
+    cookie_secure = {{ dig "oidc" "cookie_secure" true .Values.config }}
+    groups_claim = {{ .Values.config.oidc.groups_claim | default "groups" | quote }}
+    post_login_redirect = {{ .Values.config.oidc.post_login_redirect | default "/" | quote }}
+{{- with .Values.config.oidc.scopes }}
+    scopes = [{{ range $i, $s := . }}{{ if $i }}, {{ end }}{{ $s | quote }}{{ end }}]
+{{- end }}
+{{- with .Values.config.oidc.admin_groups }}
+    admin_groups = [{{ range $i, $g := . }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
+{{- end }}
+{{- end }}
 {{- end }}

@@ -24,6 +24,7 @@ type Config struct {
 	Server        ServerConfig        `json:"server,omitempty"      koanf:"server"`
 	Cors          ServerCorsConfig    `json:"server_cors_config"    koanf:"server_cors_config"`
 	ObjectStorage ObjectStorageConfig `json:"object_storage_config" koanf:"object_storage_config"`
+	OIDC          OIDCConfig          `json:"oidc,omitempty"        koanf:"oidc"`
 }
 
 func Provide(configPath string) Config {
