@@ -61,6 +61,7 @@ snapp-object-store:
       scopes: []
       post_login_redirect: "/"
       # client_secret and cookie_key are credentials: supply them as env vars
-      # from a Secret, not here.
-      #   s3panel_oidc__client_secret
-      #   s3panel_oidc__cookie_key      (openssl rand -base64 32)
+      # from a Secret, not here. Set `existingSecret` (below) to the name of a
+      # Secret carrying:
+      #   s3panel_oidc__client_secret   (omit for a public OIDC client)
+      #   s3panel_oidc__cookie_key      (REQUIRED; openssl rand -base64 32)
