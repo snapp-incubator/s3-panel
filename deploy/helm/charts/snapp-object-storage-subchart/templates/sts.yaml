@@ -34,11 +34,22 @@ spec:
 
           cookie_key is a hard startup requirement in iam mode, so without this
           block the panel cannot start in that mode at all.
+
+          The reference is `optional` so the Secret may be named before it is
+          created. A missing envFrom secretRef is otherwise a hard
+          CreateContainerConfigError, which would take down a working
+          auth_mode "s3" deployment whose only mistake was wiring the name
+          ahead of the credential.
+
+          That weakens nothing for auth_mode "iam": the app refuses to start
+          without a cookie_key, so an absent Secret still fails there — and
+          fails naming the setting that is missing.
         */}}
         {{- with .Values.existingSecret }}
         envFrom:
         - secretRef:
             name: {{ . | quote }}
+            optional: true
         {{- end }}
         ports:
         - containerPort: {{ .Values.config.port }}
