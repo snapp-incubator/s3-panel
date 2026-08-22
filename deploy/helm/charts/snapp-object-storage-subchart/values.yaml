@@ -18,3 +18,10 @@ snapp-object-store-dev:
     log_level: "debug"
     auth_enabled: "false"
     auth_token: ""
+
+# Name of an existing Secret holding the credentials for auth_mode "iam".
+# Mounted with envFrom, so its keys become environment variables:
+#   s3panel_oidc__client_secret   (omit for a public OIDC client)
+#   s3panel_oidc__cookie_key      (REQUIRED in iam mode; openssl rand -base64 32)
+# Left empty the container gets no env, which is correct for auth_mode "s3".
+existingSecret: ""

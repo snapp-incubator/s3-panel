@@ -23,6 +23,23 @@ spec:
         args:
         - s3-panel
         - --configPath=/etc/object-store/config/config.toml
+        {{- /*
+          Credentials for auth_mode "iam". They are deliberately NOT in the
+          ConfigMap: the rendered config.toml is readable by anyone who can read
+          ConfigMaps, and these two are a client secret and a cookie-signing key.
+
+          The Secret must carry:
+            s3panel_oidc__client_secret   (omit for a public OIDC client)
+            s3panel_oidc__cookie_key      (REQUIRED — openssl rand -base64 32)
+
+          cookie_key is a hard startup requirement in iam mode, so without this
+          block the panel cannot start in that mode at all.
+        */}}
+        {{- with .Values.existingSecret }}
+        envFrom:
+        - secretRef:
+            name: {{ . | quote }}
+        {{- end }}
         ports:
         - containerPort: {{ .Values.config.port }}
           protocol: TCP
