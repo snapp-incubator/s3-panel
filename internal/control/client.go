@@ -218,7 +218,7 @@ func (c *Client) BucketPolicy(ctx context.Context, token, bucket, region string)
 
 // SessionCredentials asks the STS surface for the short-lived credential object
 // operations are signed with.
-func (c *Client) SessionCredentials(ctx context.Context, token, region string, ttl time.Duration) (*Credentials, error) {
+func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant string, ttl time.Duration) (*Credentials, error) {
 	form := url.Values{}
 	form.Set("Action", "GetSessionToken")
 	if ttl > 0 {
@@ -226,6 +226,13 @@ func (c *Client) SessionCredentials(ctx context.Context, token, region string, t
 	}
 	if region != "" {
 		form.Set("Region", region)
+	}
+	// One credential reaches one tenant's buckets. Naming the tenant is what lets
+	// a caller who holds buckets in several of them work in all of them, a
+	// credential at a time, instead of being confined to whichever tenant the
+	// endpoint happened to choose.
+	if tenant != "" {
+		form.Set("Tenant", tenant)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.stsURL, strings.NewReader(form.Encode()))

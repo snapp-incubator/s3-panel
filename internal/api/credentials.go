@@ -26,7 +26,8 @@ const sessionCredentialTTL = time.Hour
 // mid-transfer.
 const credentialRefreshLeeway = 2 * time.Minute
 
-// credentialCache holds short-lived object credentials per (user, region).
+// credentialCache holds short-lived object credentials per (user, region,
+// tenant).
 //
 // Without it every page view would mint a fresh credential, and on the storage
 // side each mint is a real credential that has to be tracked and later reaped.
@@ -84,13 +85,29 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 			}
 
 			region := s.requestRegion(c)
-			key := session.Subject + "|" + region
+
+			// Which tenant this request needs, from the bucket the authorization
+			// middleware already resolved.
+			//
+			// A credential is a subuser under ONE storage account, so it reaches
+			// exactly one tenant's buckets. Minting once per session therefore
+			// stranded every user who spans tenants — an admin most of all — on
+			// whichever tenant happened to be chosen, with the rest of their
+			// buckets answering "access denied". Keying on the tenant turns that
+			// into one credential per tenant, acquired the first time a bucket in
+			// it is opened.
+			tenant := ""
+			if b, ok := resolvedBucket(c); ok {
+				tenant = b.Tenant
+			}
+
+			key := session.Subject + "|" + region + "|" + tenant
 
 			cred, hit := s.credentials.get(key)
 			if !hit {
 				var err error
 				cred, err = s.control.SessionCredentials(
-					c.Request().Context(), session.AccessToken, region, sessionCredentialTTL)
+					c.Request().Context(), session.AccessToken, region, tenant, sessionCredentialTTL)
 				if err != nil {
 					s.logger.Error("could not mint storage credentials: " + err.Error())
 					return controlError(err, "could not obtain storage credentials")

@@ -154,7 +154,7 @@ func TestSessionCredentials(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", time.Hour)
+	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__payments", time.Hour)
 	if err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
@@ -187,5 +187,62 @@ func TestDeriveSTSURL(t *testing.T) {
 func TestNewRequiresControlURL(t *testing.T) {
 	if _, err := New("", "", time.Second); err == nil {
 		t.Error("New accepted an empty control_url")
+	}
+}
+
+// TestSessionCredentialsSendsTheTenant pins that a pinned tenant actually
+// reaches the control endpoint.
+//
+// One credential is a subuser under a single storage account and so reaches
+// exactly one tenant's buckets. If this parameter is dropped the endpoint picks
+// a tenant on the caller's behalf and every bucket outside it answers "access
+// denied" — the failure looks like broken storage, not a missing form field.
+func TestSessionCredentialsSendsTheTenant(t *testing.T) {
+	var gotTenant, gotRegion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotTenant = r.FormValue("Tenant")
+		gotRegion = r.FormValue("Region")
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<GetSessionTokenResponse><GetSessionTokenResult><Credentials>
+  <AccessKeyId>AK</AccessKeyId><SecretAccessKey>SK</SecretAccessKey>
+</Credentials></GetSessionTokenResult></GetSessionTokenResponse>`))
+	}))
+	defer srv.Close()
+
+	c, _ := New("http://unused/s3", srv.URL, time.Second)
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__analytics", time.Hour); err != nil {
+		t.Fatalf("SessionCredentials: %v", err)
+	}
+	if gotTenant != "okd4_teh_1__analytics" {
+		t.Errorf("Tenant = %q, want okd4_teh_1__analytics", gotTenant)
+	}
+	if gotRegion != "teh-1" {
+		t.Errorf("Region = %q, want teh-1", gotRegion)
+	}
+}
+
+// TestSessionCredentialsOmitsAnEmptyTenant keeps the parameter optional, so a
+// single-tenant caller behaves exactly as before.
+func TestSessionCredentialsOmitsAnEmptyTenant(t *testing.T) {
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		_, present = r.Form["Tenant"]
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<GetSessionTokenResponse><GetSessionTokenResult><Credentials>
+  <AccessKeyId>AK</AccessKeyId><SecretAccessKey>SK</SecretAccessKey>
+</Credentials></GetSessionTokenResult></GetSessionTokenResponse>`))
+	}))
+	defer srv.Close()
+
+	c, _ := New("http://unused/s3", srv.URL, time.Second)
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "", time.Hour); err != nil {
+		t.Fatalf("SessionCredentials: %v", err)
+	}
+	if present {
+		t.Error("an empty tenant was sent as a form field; it must be omitted")
 	}
 }

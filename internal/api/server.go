@@ -241,14 +241,22 @@ func (s *Server) registerAPIGroup(prefix string) {
 
 	// Everything under /object reaches the gateway, so every route here takes
 	// both the permission check and a credential.
-	apiRoutesObjects := apiRoutes.Group("/object", region, withCredentials)
+	//
+	// withCredentials is listed AFTER the permission check on purpose, and lives
+	// on the routes rather than the group for the same reason: group middleware
+	// runs first in echo, and the credential to mint depends on which TENANT the
+	// bucket belongs to — something only the permission check knows, because it
+	// is what resolves the bucket. Hoisting it back onto the group would silently
+	// return to one credential per session, which strands anyone whose buckets
+	// span tenants.
+	apiRoutesObjects := apiRoutes.Group("/object", region)
 	{
-		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead))
-		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite), readOnly)
-		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.requireBucketPermission(permRead))
-		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.requireBucketPermission(permRead))
-		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite), readOnly)
-		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.requireBucketPermission(permRead))
+		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead), withCredentials)
+		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite), withCredentials, readOnly)
+		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.requireBucketPermission(permRead), withCredentials)
+		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.requireBucketPermission(permRead), withCredentials)
+		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite), withCredentials, readOnly)
+		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.requireBucketPermission(permRead), withCredentials)
 	}
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)
