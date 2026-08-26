@@ -1,6 +1,6 @@
 module github.com/snapp-incubator/S3-Panel
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.43.6

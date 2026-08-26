@@ -30,7 +30,7 @@ RUN if [ -n "$APP_VERSION" ]; then npm pkg set version="$APP_VERSION"; fi
 RUN pnpm run build
 
 # 2) Build the Go binary with the frontend embedded (internal/web/dist).
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
