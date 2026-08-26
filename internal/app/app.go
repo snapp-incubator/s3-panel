@@ -29,11 +29,8 @@ func Execute() {
 				Action: func(_ context.Context, _ *cli.Command) error {
 					cfg := config.Provide(configPath)
 					logger := logging.Provide(cfg.Logger)
-					err := api.StartServer(cancelCtx, cancelFunc, cfg, logger)
-					if err != nil {
-						return err
-					}
-					return nil
+
+					return api.StartServer(cancelCtx, cancelFunc, cfg, logger)
 				},
 				Flags: []cli.Flag{
 					&cli.StringFlag{
