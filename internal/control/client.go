@@ -131,6 +131,9 @@ type Credentials struct {
 	Endpoint        string
 	Region          string
 	SessionID       string
+	// ParentUser is the RGW account the credential belongs to — normally the team
+	// account owning the bucket, not the signed-in person.
+	ParentUser string
 }
 
 type getSessionTokenResponse struct {
@@ -142,9 +145,10 @@ type getSessionTokenResponse struct {
 			SessionToken    string    `xml:"SessionToken"`
 			Expiration      time.Time `xml:"Expiration"`
 		} `xml:"Credentials"`
-		Endpoint  string `xml:"Endpoint"`
-		Region    string `xml:"Region"`
-		SessionID string `xml:"SessionId"`
+		Endpoint   string `xml:"Endpoint"`
+		Region     string `xml:"Region"`
+		SessionID  string `xml:"SessionId"`
+		ParentUser string `xml:"ParentUser"`
 	} `xml:"GetSessionTokenResult"`
 }
 
@@ -218,7 +222,7 @@ func (c *Client) BucketPolicy(ctx context.Context, token, bucket, region string)
 
 // SessionCredentials asks the STS surface for the short-lived credential object
 // operations are signed with.
-func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant string, ttl time.Duration) (*Credentials, error) {
+func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant, bucket string, ttl time.Duration) (*Credentials, error) {
 	form := url.Values{}
 	form.Set("Action", "GetSessionToken")
 	if ttl > 0 {
@@ -233,6 +237,12 @@ func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant s
 	// endpoint happened to choose.
 	if tenant != "" {
 		form.Set("Tenant", tenant)
+	}
+	// Naming the exact bucket is what lets the control endpoint mint under the
+	// account that OWNS it. A tenant can hold several such accounts owning
+	// different buckets, so the tenant alone can only ever identify one of them.
+	if bucket != "" {
+		form.Set("Bucket", bucket)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.stsURL, strings.NewReader(form.Encode()))
@@ -261,6 +271,7 @@ func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant s
 		Endpoint:        out.Result.Endpoint,
 		Region:          out.Result.Region,
 		SessionID:       out.Result.SessionID,
+		ParentUser:      out.Result.ParentUser,
 	}, nil
 }
 

@@ -154,7 +154,7 @@ func TestSessionCredentials(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__payments", time.Hour)
+	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__payments", "", time.Hour)
 	if err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSessionCredentialsSendsTheTenant(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__analytics", time.Hour); err != nil {
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__analytics", "", time.Hour); err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
 	if gotTenant != "okd4_teh_1__analytics" {
@@ -239,10 +239,74 @@ func TestSessionCredentialsOmitsAnEmptyTenant(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "", time.Hour); err != nil {
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "", "", time.Hour); err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
 	if present {
 		t.Error("an empty tenant was sent as a form field; it must be omitted")
+	}
+}
+
+// TestSessionCredentialsSendsTheBucket pins the parameter the owner lookup
+// depends on.
+//
+// A credential reaches what its parent account OWNS, and ownership is per
+// account, not per tenant — one tenant can hold several team accounts owning
+// different buckets. Without the bucket the endpoint can only guess one of them,
+// and every bucket owned by the others answers "access denied".
+func TestSessionCredentialsSendsTheBucket(t *testing.T) {
+	var gotBucket, gotTenant string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		gotBucket, gotTenant = r.FormValue("Bucket"), r.FormValue("Tenant")
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<GetSessionTokenResponse><GetSessionTokenResult><Credentials>
+  <AccessKeyId>AK</AccessKeyId><SecretAccessKey>SK</SecretAccessKey>
+</Credentials><ParentUser>okd4_teh_1__payments$reports</ParentUser>
+</GetSessionTokenResult></GetSessionTokenResponse>`))
+	}))
+	defer srv.Close()
+
+	c, _ := New("http://unused/s3", srv.URL, time.Second)
+	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1",
+		"okd4_teh_1__payments", "okd4_teh_1__payments--exports", time.Hour)
+	if err != nil {
+		t.Fatalf("SessionCredentials: %v", err)
+	}
+	if gotBucket != "okd4_teh_1__payments--exports" {
+		t.Errorf("Bucket = %q, want the resource name", gotBucket)
+	}
+	if gotTenant != "okd4_teh_1__payments" {
+		t.Errorf("Tenant = %q", gotTenant)
+	}
+	// The parent is the team account that owns the bucket, not the signed-in
+	// person; surfacing it is what makes an audit trail readable.
+	if cred.ParentUser != "okd4_teh_1__payments$reports" {
+		t.Errorf("ParentUser = %q, want the owning account", cred.ParentUser)
+	}
+}
+
+// TestSessionCredentialsOmitsAnEmptyBucket keeps the parameter optional, so a
+// caller that names only a tenant behaves as before.
+func TestSessionCredentialsOmitsAnEmptyBucket(t *testing.T) {
+	var present bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		_, present = r.Form["Bucket"]
+		w.Header().Set("Content-Type", "application/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<GetSessionTokenResponse><GetSessionTokenResult><Credentials>
+  <AccessKeyId>AK</AccessKeyId><SecretAccessKey>SK</SecretAccessKey>
+</Credentials></GetSessionTokenResult></GetSessionTokenResponse>`))
+	}))
+	defer srv.Close()
+
+	c, _ := New("http://unused/s3", srv.URL, time.Second)
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "tenant", "", time.Hour); err != nil {
+		t.Fatalf("SessionCredentials: %v", err)
+	}
+	if present {
+		t.Error("an empty bucket was sent as a form field; it must be omitted")
 	}
 }
