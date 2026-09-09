@@ -222,7 +222,7 @@ func (c *Client) BucketPolicy(ctx context.Context, token, bucket, region string)
 
 // SessionCredentials asks the STS surface for the short-lived credential object
 // operations are signed with.
-func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant, bucket string, ttl time.Duration) (*Credentials, error) {
+func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant, bucket, access string, ttl time.Duration) (*Credentials, error) {
 	form := url.Values{}
 	form.Set("Action", "GetSessionToken")
 	if ttl > 0 {
@@ -243,6 +243,12 @@ func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant, 
 	// different buckets, so the tenant alone can only ever identify one of them.
 	if bucket != "" {
 		form.Set("Bucket", bucket)
+	}
+	// The access level this request needs. The endpoint clamps it against the
+	// caller's grants, so it can only ever narrow what would otherwise be issued
+	// — asking for more than the grants allow yields the grants, not the ask.
+	if access != "" {
+		form.Set("Access", access)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.stsURL, strings.NewReader(form.Encode()))

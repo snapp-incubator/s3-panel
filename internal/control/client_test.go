@@ -154,7 +154,7 @@ func TestSessionCredentials(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__payments", "", time.Hour)
+	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__payments", "", "", time.Hour)
 	if err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestSessionCredentialsSendsTheTenant(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__analytics", "", time.Hour); err != nil {
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "okd4_teh_1__analytics", "", "", time.Hour); err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
 	if gotTenant != "okd4_teh_1__analytics" {
@@ -239,7 +239,7 @@ func TestSessionCredentialsOmitsAnEmptyTenant(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "", "", time.Hour); err != nil {
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "", "", "", time.Hour); err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
 	if present {
@@ -255,10 +255,11 @@ func TestSessionCredentialsOmitsAnEmptyTenant(t *testing.T) {
 // different buckets. Without the bucket the endpoint can only guess one of them,
 // and every bucket owned by the others answers "access denied".
 func TestSessionCredentialsSendsTheBucket(t *testing.T) {
-	var gotBucket, gotTenant string
+	var gotBucket, gotTenant, gotAccess string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		gotBucket, gotTenant = r.FormValue("Bucket"), r.FormValue("Tenant")
+		gotAccess = r.FormValue("Access")
 		w.Header().Set("Content-Type", "application/xml")
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
 <GetSessionTokenResponse><GetSessionTokenResult><Credentials>
@@ -270,7 +271,7 @@ func TestSessionCredentialsSendsTheBucket(t *testing.T) {
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
 	cred, err := c.SessionCredentials(context.Background(), "token", "teh-1",
-		"okd4_teh_1__payments", "okd4_teh_1__payments--exports", time.Hour)
+		"okd4_teh_1__payments", "okd4_teh_1__payments--exports", "read", time.Hour)
 	if err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
@@ -279,6 +280,11 @@ func TestSessionCredentialsSendsTheBucket(t *testing.T) {
 	}
 	if gotTenant != "okd4_teh_1__payments" {
 		t.Errorf("Tenant = %q", gotTenant)
+	}
+	// The level the ROUTE needs. The endpoint clamps it to the grants, so sending
+	// it can only narrow the credential that comes back.
+	if gotAccess != "read" {
+		t.Errorf("Access = %q, want the level the caller asked for", gotAccess)
 	}
 	// The parent is the team account that owns the bucket, not the signed-in
 	// person; surfacing it is what makes an audit trail readable.
@@ -303,7 +309,7 @@ func TestSessionCredentialsOmitsAnEmptyBucket(t *testing.T) {
 	defer srv.Close()
 
 	c, _ := New("http://unused/s3", srv.URL, time.Second)
-	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "tenant", "", time.Hour); err != nil {
+	if _, err := c.SessionCredentials(context.Background(), "token", "teh-1", "tenant", "", "", time.Hour); err != nil {
 		t.Fatalf("SessionCredentials: %v", err)
 	}
 	if present {

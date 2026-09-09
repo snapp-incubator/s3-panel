@@ -78,6 +78,12 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				// answer — repeating it there would mean a second round trip to the
 				// control endpoint on every object request.
 				c.Set(resolvedBucketKey, b)
+
+				// Record what this ROUTE needs, not what the user could do. A
+				// listing asks for read even from someone who may write the bucket,
+				// so the credential it is signed with cannot write — the permission
+				// gate stops being the only thing between a bug and a mutation.
+				c.Set(requiredPermissionKey, permission)
 				return next(c)
 			}
 
@@ -195,4 +201,32 @@ const resolvedBucketKey = "iam.resolved_bucket"
 func resolvedBucket(c echo.Context) (control.Bucket, bool) {
 	b, ok := c.Get(resolvedBucketKey).(control.Bucket)
 	return b, ok
+}
+
+// requiredPermissionKey is where requireBucketPermission leaves the permission
+// the ROUTE declared, for the credential middleware in the same chain.
+const requiredPermissionKey = "iam.required_permission"
+
+// Storage access levels the control endpoint understands. They are coarser than
+// the panel's permissions because RGW has only these three, and they are
+// account-wide.
+const (
+	accessRead      = "read"
+	accessReadWrite = "readwrite"
+)
+
+// requiredAccess is the storage access level this request needs, derived from
+// the permission its route declared.
+//
+// Defaults to read whenever the route named no permission — a route that reaches
+// the gateway without going through the permission gate should not be able to
+// obtain a credential that can mutate anything.
+func requiredAccess(c echo.Context) string {
+	perm, _ := c.Get(requiredPermissionKey).(string)
+	switch perm {
+	case permWrite, permOwner:
+		return accessReadWrite
+	default:
+		return accessRead
+	}
 }

@@ -27,10 +27,16 @@ const sessionCredentialTTL = time.Hour
 const credentialRefreshLeeway = 2 * time.Minute
 
 // credentialCache holds short-lived object credentials per (user, region,
-// bucket).
+// bucket, access level).
 //
-// Without it every page view would mint a fresh credential, and on the storage
-// side each mint is a real credential that has to be tracked and later reaped.
+// The access level is part of the key because a listing and an upload of the
+// same bucket ask for different credentials: the listing gets one that cannot
+// write. Drop it from the key and the listing's read-only credential is handed
+// to the next upload, which the gateway then refuses.
+//
+// Without the cache every page view would mint a fresh credential, and on the
+// storage side each mint is a real credential that has to be tracked and later
+// reaped.
 type credentialCache struct {
 	mu    sync.Mutex
 	items map[string]*control.Credentials
@@ -104,13 +110,24 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 				tenant, bucket = b.Tenant, b.Name
 			}
 
-			key := session.Subject + "|" + region + "|" + bucket
+			// The level this ROUTE needs, not the level this user could reach. A
+			// listing is signed with a credential that cannot write, even for
+			// someone who holds write on the bucket, so the permission gate above
+			// is no longer the only thing standing between a bug and a mutation.
+			// The control endpoint clamps it to the grants; it can only narrow.
+			access := requiredAccess(c)
+
+			// Keyed per (bucket, level). The level MUST be in the key: a listing
+			// caches a read-only credential, and without it the next upload to the
+			// same bucket would reuse that credential and be refused by the
+			// gateway.
+			key := session.Subject + "|" + region + "|" + bucket + "|" + access
 
 			cred, hit := s.credentials.get(key)
 			if !hit {
 				var err error
 				cred, err = s.control.SessionCredentials(
-					c.Request().Context(), session.AccessToken, region, tenant, bucket, sessionCredentialTTL)
+					c.Request().Context(), session.AccessToken, region, tenant, bucket, access, sessionCredentialTTL)
 				if err != nil {
 					s.logger.Error("could not mint storage credentials: " + err.Error())
 					return controlError(err, "could not obtain storage credentials")
