@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -32,6 +33,21 @@ type BaseTestSuite struct {
 }
 
 func (s *BaseTestSuite) SetupSuite() {
+	// This suite drives a real server against a real object-storage backend, so
+	// it cannot run without one. configs/test-config.toml ships with no endpoint,
+	// which made `go test ./...` fail for everyone with an unhelpful
+	// "failed to setup application" — CI only stayed green because it excludes
+	// this package by name (`go list ./... | grep -v /tests`).
+	//
+	// Skipping when nothing is configured says the same thing honestly, keeps a
+	// plain `go test ./...` green, and lets the suite actually run for anyone who
+	// points the config at a gateway. Set object_storage_config.url (and its
+	// keys) to a reachable S3 endpoint to exercise it.
+	if strings.TrimSpace(conf.ObjectStorage.URL) == "" {
+		s.T().Skip("object_storage_config.url is not set in " + confPath +
+			" — this suite needs a reachable S3 endpoint")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	s.context = ctx
 	s.cancel = cancel
