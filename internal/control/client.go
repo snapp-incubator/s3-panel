@@ -26,7 +26,24 @@ import (
 type Client struct {
 	baseURL string
 	stsURL  string
-	http    *http.Client
+	// stsClientKey identifies this panel to the control endpoint's STS surface.
+	// Empty when that endpoint requires none.
+	stsClientKey string
+	http         *http.Client
+}
+
+// stsClientHeader carries stsClientKey. It must match the control endpoint's
+// STSClientHeader.
+const stsClientHeader = "X-IAM-STS-Client"
+
+// WithSTSClientKey sets the shared secret the STS surface may require.
+//
+// A setter rather than another constructor argument: the key is optional, the
+// control endpoint works without it, and every existing caller and test should
+// keep building a client the same way.
+func (c *Client) WithSTSClientKey(key string) *Client {
+	c.stsClientKey = strings.TrimSpace(key)
+	return c
 }
 
 // New builds a client. stsURL may be empty, in which case it is derived from
@@ -258,6 +275,12 @@ func (c *Client) SessionCredentials(ctx context.Context, token, region, tenant, 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	// Marks this caller as the panel. The user's token above still says WHO is
+	// asking; this says the request came through a front end that enforces per
+	// request, rather than from a CLI holding the credential afterwards.
+	if c.stsClientKey != "" {
+		req.Header.Set(stsClientHeader, c.stsClientKey)
 	}
 
 	body, err := c.send(req)

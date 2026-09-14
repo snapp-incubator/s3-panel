@@ -98,7 +98,7 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("iam auth mode: %w", err)
 	}
-	s.control = controlClient
+	s.control = controlClient.WithSTSClientKey(s.Config.ObjectStorage.STSClientKey)
 	s.credentials = newCredentialCache()
 
 	return nil

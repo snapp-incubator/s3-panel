@@ -83,6 +83,16 @@ type ObjectStorageConfig struct {
 	// are signed with (AWS STS GetSessionToken). Defaults to ControlURL with its
 	// last path segment replaced by "sts". AuthModeIAM only.
 	STSURL string `json:"sts_url" koanf:"sts_url"`
+	// STSClientKey is a shared secret the control endpoint may require on the STS
+	// surface, marking this panel as a trusted front end.
+	//
+	// It is not a user credential and grants nothing on its own: the signed-in
+	// person is still authenticated and still bounds what may be minted. It exists
+	// so that minting is something people do THROUGH the panel — where every
+	// request is authorized before anything is signed — rather than directly with
+	// `aws sts get-session-token`, which would hand them an account-wide
+	// credential to keep. Leave empty when the control endpoint requires none.
+	STSClientKey string `json:"sts_client_key" koanf:"sts_client_key"`
 }
 
 // OIDCConfig configures the browser login flow used in AuthModeIAM.
