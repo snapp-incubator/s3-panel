@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sync"
 	"time"
@@ -13,9 +14,14 @@ import (
 
 // Headers the handlers bind their storage credentials from.
 const (
-	accessKeyHeader = "access_key"
-	secretKeyHeader = "secret_key"
+	accessKeyHeader    = "access_key"
+	secretKeyHeader    = "secret_key"
+	sessionTokenHeader = "session_token"
 )
+
+// storageCredentialHeaders is every header a handler may take a storage
+// credential from. Listed once so stripping and injecting cannot drift apart.
+var storageCredentialHeaders = []string{accessKeyHeader, secretKeyHeader, sessionTokenHeader}
 
 // sessionCredentialTTL is how long an object credential is requested for. The
 // control endpoint may clamp it lower.
@@ -42,8 +48,46 @@ type credentialCache struct {
 	items map[string]*control.Credentials
 }
 
-func newCredentialCache() *credentialCache {
-	return &credentialCache{items: map[string]*control.Credentials{}}
+// credentialSweepInterval is how often expired entries are dropped.
+//
+// Without a sweep an entry is only ever evicted when the SAME key is read again,
+// so a panel with many users and buckets keeps a live-until-expiry access key
+// and secret for every combination it has ever served, for the process
+// lifetime. Users leave, buckets are handed back, and those keys stay resident.
+const credentialSweepInterval = 5 * time.Minute
+
+// newCredentialCache builds the cache and starts the sweeper that bounds it. The
+// sweeper stops with ctx, which is the server's own cancellation context.
+func newCredentialCache(ctx context.Context) *credentialCache {
+	c := &credentialCache{items: map[string]*control.Credentials{}}
+	go c.sweepUntil(ctx, credentialSweepInterval)
+	return c
+}
+
+func (c *credentialCache) sweepUntil(ctx context.Context, every time.Duration) {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.sweep()
+		}
+	}
+}
+
+// sweep drops every entry that can no longer be served. It uses the same
+// leeway as get, so an entry sweep keeps is one get would still hand out.
+func (c *credentialCache) sweep() {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, cred := range c.items {
+		if !cred.Expiration.IsZero() && now.After(cred.Expiration.Add(-credentialRefreshLeeway)) {
+			delete(c.items, key)
+		}
+	}
 }
 
 func (c *credentialCache) get(key string) (*control.Credentials, bool) {
@@ -105,10 +149,18 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 			// Keyed per bucket; deduplication is the control endpoint's job — it
 			// hands back the same credential for two buckets owned by the same
 			// account, so this does not mean one credential per bucket.
-			tenant, bucket := "", ""
-			if b, ok := resolvedBucket(c); ok {
-				tenant, bucket = b.Tenant, b.Name
+			b, resolved := resolvedBucket(c)
+			if !resolved {
+				// No bucket means the permission gate found nothing to resolve, and
+				// a credential is minted against an OWNING ACCOUNT the control
+				// endpoint picks from the bucket. Asking without one either fails
+				// (the endpoint cannot choose an account) or succeeds too broadly,
+				// and either way burns an STS round trip on a route that never
+				// reaches the gateway. Leave the headers empty and let the handler
+				// refuse for want of a credential.
+				return next(c)
 			}
+			tenant, bucket := b.Tenant, b.Name
 
 			// The level this ROUTE needs, not the level this user could reach. A
 			// listing is signed with a credential that cannot write, even for
@@ -139,7 +191,54 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 			// its own keys past the authorization gate by setting these itself.
 			c.Request().Header.Set(accessKeyHeader, cred.AccessKeyID)
 			c.Request().Header.Set(secretKeyHeader, cred.SecretAccessKey)
+			// A real STS credential is refused without its session token: the SDK
+			// only sends X-Amz-Security-Token when this is set. Set unconditionally
+			// so a stale token from a previous credential cannot survive here.
+			c.Request().Header.Set(sessionTokenHeader, cred.SessionToken)
 
+			// What a handler must not outlive. A share link presigned with this
+			// credential stops working the moment the credential lapses, so the
+			// share handler clamps its expiry to what is left here.
+			c.Set(credentialExpiryKey, cred.Expiration)
+
+			return next(c)
+		}
+	}
+}
+
+// credentialExpiryKey is where injectObjectCredentials leaves the moment the
+// injected credential stops working.
+const credentialExpiryKey = "iam.credential_expiry"
+
+// credentialExpiry reports when the injected credential lapses, if one was
+// injected and the endpoint named an expiry.
+func credentialExpiry(c echo.Context) (time.Time, bool) {
+	at, ok := c.Get(credentialExpiryKey).(time.Time)
+	return at, ok && !at.IsZero()
+}
+
+// stripClientCredentials clears the storage-credential headers off every
+// incoming request in AuthModeIAM.
+//
+// In that mode the caller holds no storage keys — the panel mints them after it
+// has authorized the request — so any such header on the way in is a client
+// trying to reach the gateway with keys of its own. injectObjectCredentials
+// overwrites them on the routes it runs on, but it runs per route, and a route
+// added later without it would otherwise sign gateway calls with whatever the
+// caller put in the headers. Stripping at the group makes that fail closed: the
+// new route gets no credential at all rather than the caller's.
+//
+// It is a no-op in s3 mode, where these headers are exactly how a user supplies
+// the credentials the panel is meant to use.
+func (s *Server) stripClientCredentials() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if !s.Config.Server.IsIAMMode() {
+				return next(c)
+			}
+			for _, h := range storageCredentialHeaders {
+				c.Request().Header.Del(h)
+			}
 			return next(c)
 		}
 	}

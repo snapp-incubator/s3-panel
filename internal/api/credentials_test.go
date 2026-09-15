@@ -83,7 +83,7 @@ func credentialServer(t *testing.T) (*Server, *mintRecorder, func()) {
 		Config:      config.Config{Server: config.ServerConfig{AuthMode: config.AuthModeIAM, Region: "teh-1"}},
 		control:     client,
 		logger:      zap.NewNop(),
-		credentials: newCredentialCache(),
+		credentials: newCredentialCache(t.Context()),
 	}
 	return s, rec, srv.Close
 }
@@ -174,5 +174,156 @@ func TestRequiredAccessDefaultsToRead(t *testing.T) {
 		if got := requiredAccess(c); got != want {
 			t.Errorf("permission %q yielded %q, want %q", perm, got, want)
 		}
+	}
+}
+
+// TestSessionTokenReachesTheHandler is the difference between iam mode working
+// and not working against a real STS gateway.
+//
+// A GetSessionToken credential is refused with InvalidAccessKeyId unless the
+// request also carries X-Amz-Security-Token, and the SDK only sends that when
+// aws.Credentials.SessionToken is set. The token was parsed off the STS response
+// and then dropped here, which only went unnoticed because Ceph Mimic has no STS
+// and hands back plain subuser keys with no token at all.
+func TestSessionTokenReachesTheHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
+<GetSessionTokenResponse><GetSessionTokenResult><Credentials>
+  <AccessKeyId>AKIA</AccessKeyId>
+  <SecretAccessKey>SK</SecretAccessKey>
+  <SessionToken>FQoGZXIvYXdzE-the-security-token</SessionToken>
+</Credentials></GetSessionTokenResult></GetSessionTokenResponse>`))
+			return
+		}
+		_, _ = w.Write([]byte(writableBucketXML))
+	}))
+	defer srv.Close()
+
+	client, err := control.New(srv.URL, srv.URL, time.Second)
+	if err != nil {
+		t.Fatalf("control.New: %v", err)
+	}
+	s := &Server{
+		Config:      config.Config{Server: config.ServerConfig{AuthMode: config.AuthModeIAM, Region: "teh-1"}},
+		control:     client,
+		logger:      zap.NewNop(),
+		credentials: newCredentialCache(t.Context()),
+	}
+
+	var token string
+	handler := func(c echo.Context) error {
+		token = c.Request().Header.Get(sessionTokenHeader)
+		return c.NoContent(http.StatusOK)
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/object/list?bucket=okd4_teh_1__payments--invoices", nil)
+	c := withSession(e.NewContext(req, httptest.NewRecorder()))
+
+	chain := s.requireBucketPermission(permRead)(s.injectObjectCredentials()(handler))
+	if err := chain(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "FQoGZXIvYXdzE-the-security-token" {
+		t.Fatalf("session_token header = %q; an STS credential is unusable without it", token)
+	}
+}
+
+// TestNoResolvedBucketDoesNotMint: a credential is minted against the account
+// that OWNS a bucket, so asking without one either fails at the endpoint or
+// succeeds too broadly — and burns an STS round trip either way, on every poll
+// of a route that never reaches the gateway.
+func TestNoResolvedBucketDoesNotMint(t *testing.T) {
+	s, rec, done := credentialServer(t)
+	defer done()
+
+	var injected string
+	handler := func(c echo.Context) error {
+		injected = c.Request().Header.Get(accessKeyHeader)
+		return c.NoContent(http.StatusOK)
+	}
+	e := echo.New()
+	c := withSession(e.NewContext(
+		httptest.NewRequest(http.MethodGet, "/user/quota", nil), httptest.NewRecorder()))
+
+	if err := s.injectObjectCredentials()(handler)(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := rec.seen(); len(got) != 0 {
+		t.Errorf("minted %v for a request that named no bucket", got)
+	}
+	if injected != "" {
+		t.Errorf("access_key = %q, want empty", injected)
+	}
+}
+
+// TestClientSuppliedCredentialsAreStripped: in iam mode the caller holds no
+// storage keys, so these headers on the way in are a client trying to reach the
+// gateway past the authorization gate. injectObjectCredentials overwrites them
+// on the routes it runs on — this is what covers a route that has neither.
+func TestClientSuppliedCredentialsAreStripped(t *testing.T) {
+	s, _, done := credentialServer(t)
+	defer done()
+
+	seen := map[string]string{}
+	handler := func(c echo.Context) error {
+		for _, h := range storageCredentialHeaders {
+			seen[h] = c.Request().Header.Get(h)
+		}
+		return c.NoContent(http.StatusOK)
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/object/list?bucket=b", nil)
+	for _, h := range storageCredentialHeaders {
+		req.Header.Set(h, "smuggled")
+	}
+	c := withSession(e.NewContext(req, httptest.NewRecorder()))
+
+	if err := s.stripClientCredentials()(handler)(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for h, v := range seen {
+		if v != "" {
+			t.Errorf("%s survived as %q; a caller reached the gateway with its own keys", h, v)
+		}
+	}
+
+	// s3 mode is the opposite case: these headers ARE the credentials the panel
+	// is meant to use, and stripping them would break every request.
+	s.Config.Server.AuthMode = config.AuthModeS3
+	req = httptest.NewRequest(http.MethodGet, "/object/list?bucket=b", nil)
+	req.Header.Set(accessKeyHeader, "user-key")
+	c = e.NewContext(req, httptest.NewRecorder())
+	if err := s.stripClientCredentials()(handler)(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if seen[accessKeyHeader] != "user-key" {
+		t.Errorf("s3 mode lost the user's own key: %q", seen[accessKeyHeader])
+	}
+}
+
+// TestCredentialCacheSweepsExpiredEntries: without a sweep an entry is dropped
+// only when the SAME key is read again, so every (user, region, bucket, level)
+// the panel has ever served keeps a live access key and secret resident for the
+// process lifetime.
+func TestCredentialCacheSweepsExpiredEntries(t *testing.T) {
+	cache := newCredentialCache(t.Context())
+	cache.put("live", &control.Credentials{Expiration: time.Now().Add(time.Hour)})
+	cache.put("lapsed", &control.Credentials{Expiration: time.Now().Add(-time.Minute)})
+	cache.put("eternal", &control.Credentials{})
+
+	cache.sweep()
+
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	if _, ok := cache.items["lapsed"]; ok {
+		t.Error("an expired credential survived the sweep")
+	}
+	if _, ok := cache.items["live"]; !ok {
+		t.Error("the sweep dropped a credential that is still usable")
+	}
+	if _, ok := cache.items["eternal"]; !ok {
+		t.Error("the sweep dropped a credential with no stated expiry")
 	}
 }
