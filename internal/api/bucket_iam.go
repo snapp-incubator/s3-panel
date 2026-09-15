@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -148,9 +149,13 @@ func (s *Server) HandleIAMBucketDetail() echo.HandlerFunc {
 			s.logger.Error("control endpoint bucket list failed: " + err.Error())
 			return controlError(err, "could not resolve the bucket")
 		}
+		// Matched on the control-plane identifier or the gateway spelling only,
+		// never on the bare RealName: that is unique within a tenant and nothing
+		// more, so "exports" would resolve to whichever of tenantA--exports and
+		// tenantB--exports the endpoint listed first.
 		var found *control.Bucket
 		for i := range buckets {
-			if buckets[i].Name == name || buckets[i].S3Name == name || buckets[i].RealName == name {
+			if buckets[i].Name == name || buckets[i].S3Name == name {
 				found = &buckets[i]
 				break
 			}
@@ -180,7 +185,11 @@ func (s *Server) HandleIAMBucketDetail() echo.HandlerFunc {
 			detail.PolicyDenied = true
 		case err != nil:
 			s.logger.Warn("bucket policy unavailable for " + found.Name + ": " + err.Error())
-		case policy != nil:
+		// len and validity, not just non-nil: io.ReadAll on an empty 200 yields a
+		// non-nil zero-length slice, and a RawMessage holding that fails its own
+		// MarshalJSON ("unexpected end of JSON input") — which fails c.JSON and
+		// turns the whole detail page into a 500 instead of rendering "no policy".
+		case len(policy) > 0 && json.Valid(policy):
 			detail.Policy = policy
 			detail.PolicyPresent = true
 		}

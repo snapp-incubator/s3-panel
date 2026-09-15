@@ -23,9 +23,17 @@ const (
 // In that mode object calls are signed with a credential the panel obtained on
 // the user's behalf, not with keys the user personally holds — so the panel is
 // the enforcement point, and a route that forgets to check is a route that
-// leaks. This middleware is therefore applied to the whole data-plane group
-// rather than to individual handlers: default-deny, and a new route inherits the
-// check instead of needing to remember it.
+// leaks.
+//
+// It is attached per ROUTE rather than to the data-plane group, because each
+// route declares the permission IT needs and the chain around it is ordered:
+// read-only refusal, then this gate, then the credential mint that depends on
+// the bucket this gate resolved. A group cannot express that.
+//
+// What keeps a route added later from leaking is not this middleware but
+// stripClientCredentials on the group: a route without this gate also has no
+// credential injected, and the caller's own access_key/secret_key headers have
+// already been removed, so it fails closed rather than signing with them.
 //
 // In AuthModeS3 it does nothing: the gateway is still the authority there,
 // because every request is signed with the user's own credentials.
@@ -50,7 +58,15 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 			}
 
 			for _, b := range buckets {
-				if b.Name != bucket && b.S3Name != bucket && b.RealName != bucket {
+				// Matched on the control-plane identifier or the gateway spelling
+				// only, never on RealName. RealName is the BARE bucket name, which
+				// is unique within a tenant and nothing more: a caller holding
+				// tenantA--exports and tenantB--exports who asks for "exports"
+				// would resolve to whichever the endpoint listed first, and the
+				// credential would be minted for the wrong owning account — a write
+				// refused or, worse, performed against the other tenant's bucket,
+				// with no signal either way.
+				if b.Name != bucket && b.S3Name != bucket {
 					continue
 				}
 				if !b.Can(permission) {
@@ -69,9 +85,14 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				// Done here because this is where the bucket has just been
 				// resolved: one lookup answers both "may you?" and "what is it
 				// actually called?", and no handler has to remember either.
-				if b.S3Name != "" && b.S3Name != bucket {
-					rewriteBucketParam(c, b.S3Name)
-				}
+				// Unconditional, and falling back to b.Name when the endpoint
+				// reports no S3Name — a control endpoint may legitimately omit it
+				// (a plain S3 implementation leaves these elements empty), and
+				// skipping the rewrite there handed the control-plane identifier
+				// straight to the S3 client. Rewriting even when the value is
+				// already correct also keeps the query and the multipart form in
+				// sync, which the upload path currently depends on by accident.
+				rewriteBucketParam(c, b.GatewayName())
 
 				// Hand the resolved bucket to whatever runs next. The credential
 				// middleware needs its tenant, and this lookup already paid for the
