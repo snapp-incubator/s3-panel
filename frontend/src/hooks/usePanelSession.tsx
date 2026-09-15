@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 
-import { fetchPanelConfig, fetchPanelSession } from '@/api/panel'
+import {
+  fetchPanelConfig,
+  fetchPanelSession,
+  PanelRequestError
+} from '@/api/panel'
 import type { IPanelSessionResponse, TAuthMode } from '@/types/s3/panel.types'
 
 interface IPanelSessionStore {
@@ -11,6 +15,8 @@ interface IPanelSessionStore {
   readOnly: boolean
   session: IPanelSessionResponse | null
   loading: boolean
+  /** Set when bootstrap could not reach the server; null once it succeeds. */
+  bootstrapError: string | null
   /** Reads /api/config and, in iam mode, /auth/me. Safe to call repeatedly. */
   bootstrap: () => Promise<void>
   isIAMMode: () => boolean
@@ -21,13 +27,23 @@ interface IPanelSessionStore {
 }
 
 /**
+ * The bootstrap currently running, if any.
+ *
+ * Concurrent callers await THIS rather than returning early. A `loading` flag
+ * alone resolved the second caller's promise immediately, so whoever awaited it
+ * carried on with `authMode` still null — the very state the await was there to
+ * wait out.
+ */
+let inFlight: Promise<void> | null = null
+
+/**
  * Holds which authentication mode this deployment runs and, in `iam` mode, who
  * is signed in.
  *
  * Deliberately separate from `useS3Credentials`: that store holds credentials
  * the user typed, this one holds an identity the server established. Only one is
  * ever active, and the panel picks between them from the server's own config
- * rather than from a build-time flag, so the same bundle serves both modes.
+ * rather than from a build-time flag, so the same bundle serves both regimes.
  */
 const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   authMode: null,
@@ -35,46 +51,83 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   readOnly: false,
   session: null,
   loading: false,
+  bootstrapError: null,
 
   bootstrap: async () => {
-    if (get().loading) return
-    set({ loading: true })
+    if (inFlight) return inFlight
 
-    try {
-      const config = await fetchPanelConfig()
+    const run = async () => {
+      set({ loading: true })
 
-      if (config.auth_mode !== 'iam') {
+      try {
+        const config = await fetchPanelConfig()
+
+        if (config.auth_mode !== 'iam') {
+          set({
+            authMode: config.auth_mode,
+            loginUrl: config.login_url ?? '',
+            readOnly: config.read_only === true,
+            session: null,
+            bootstrapError: null
+          })
+
+          return
+        }
+
+        // A 401 here is the ordinary "not signed in yet" state, not a failure.
+        const session = await fetchPanelSession()
+
+        // authMode and session are published TOGETHER, in one update. The app
+        // un-gates rendering as soon as authMode is known, and the router runs
+        // its route guards immediately — so publishing authMode first would have
+        // the guard read a session that has not arrived yet and bounce a
+        // signed-in user straight back to the login screen.
         set({
           authMode: config.auth_mode,
           loginUrl: config.login_url ?? '',
           readOnly: config.read_only === true,
-          session: null
+          session,
+          bootstrapError: null
         })
+      } catch (error) {
+        const status =
+          error instanceof PanelRequestError ? error.status : undefined
 
-        return
+        // Only a 404 means "this backend has no /api/config", which is an older
+        // build that speaks nothing but s3-credential login. Everything else —
+        // a 500, a gateway blip, no network — is a fault, and answering it by
+        // switching to s3 mode showed a signed-in user a credential form they
+        // have no keys for, on a deployment where keys are the thing the panel
+        // exists to avoid.
+        if (status === 404) {
+          set({
+            authMode: 's3',
+            loginUrl: '',
+            readOnly: false,
+            session: null,
+            bootstrapError: null
+          })
+
+          return
+        }
+
+        // Nothing about the mode is known any more, so nothing about it is
+        // changed: whatever was last read stays, and the error is published for
+        // the app to surface and offer a retry.
+        set({
+          bootstrapError:
+            error instanceof Error ? error.message : 'could not reach the panel'
+        })
+      } finally {
+        set({ loading: false })
       }
-
-      // A 401 here is the ordinary "not signed in yet" state, not a failure.
-      const session = await fetchPanelSession()
-
-      // authMode and session are published TOGETHER, in one update. The app
-      // un-gates rendering as soon as authMode is known, and the router runs its
-      // route guards immediately — so publishing authMode first would have the
-      // guard read a session that has not arrived yet and bounce a signed-in
-      // user straight back to the login screen.
-      set({
-        authMode: config.auth_mode,
-        loginUrl: config.login_url ?? '',
-        readOnly: config.read_only === true,
-        session
-      })
-    } catch {
-      // Fall back to the historical behaviour rather than blocking the app: an
-      // older backend has no /api/config, and it only speaks s3-credential login.
-      set({ authMode: 's3', loginUrl: '', session: null })
-    } finally {
-      set({ loading: false })
     }
+
+    inFlight = run().finally(() => {
+      inFlight = null
+    })
+
+    return inFlight
   },
 
   isIAMMode: () => get().authMode === 'iam',
