@@ -99,7 +99,7 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 		return fmt.Errorf("iam auth mode: %w", err)
 	}
 	s.control = controlClient.WithSTSClientKey(s.Config.ObjectStorage.STSClientKey)
-	s.credentials = newCredentialCache()
+	s.credentials = newCredentialCache(ctx)
 
 	return nil
 }
@@ -196,14 +196,13 @@ func (s *Server) registerAPIGroup(prefix string) {
 		guard = s.auth.RequireSession()
 	}
 
-	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard)
-
-	// Storage credentials are attached only to the routes that actually sign a
-	// call to the gateway. Attaching them to the whole API would mint a
-	// credential just to render a bucket list — and would lock out an
-	// administrator who has every right to browse but no storage identity of
-	// their own to mint against. It is a no-op in s3 mode.
-	withCredentials := s.injectObjectCredentials()
+	// In iam mode the caller holds no storage keys of their own, so any
+	// access_key/secret_key/session_token header on the way in is a client trying
+	// to reach the gateway past the authorization gate. Stripped for the whole
+	// API group, which is what makes a route added later fail CLOSED: it gets no
+	// credential rather than the caller's. A no-op in s3 mode, where those
+	// headers are how the user supplies the credentials the panel must use.
+	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard, s.stripClientCredentials())
 
 	// A single gate in front of everything that could change the storage
 	// backend. It outranks the permission checks below on purpose: holding
@@ -222,50 +221,97 @@ func (s *Server) registerAPIGroup(prefix string) {
 	region := s.regionRouter()
 
 	// In iam mode the panel signs object calls with a credential it obtained on
-	// the user's behalf, which makes it the enforcement point. The permission
-	// gate is attached to the GROUP rather than to each handler so a route added
-	// later inherits the check instead of having to remember it. In s3 mode these
-	// are no-ops: the gateway is still the authority there.
+	// the user's behalf, which makes it the enforcement point. Each route names
+	// the permission IT needs, so the gate is per route rather than on the group;
+	// what stops a route added later from signing with caller-supplied keys is
+	// stripClientCredentials on the group above, not this gate.
+	//
+	// Order within a route's middleware list is load-bearing, and gatewayChain is
+	// where it is fixed — see the comment there.
 	apiRoutesBuckets := apiRoutes.Group("/bucket", region)
 	{
 		// list and detail are answered entirely from the control endpoint, so
 		// they need no storage credential.
 		apiRoutesBuckets.GET("/list", s.bucketListHandler())
-		apiRoutesBuckets.GET("/quota", s.HandleBucketQuota(), s.requireBucketPermission(permRead), withCredentials)
 		apiRoutesBuckets.POST("/create", s.bucketCreateHandler(), readOnly)
-		apiRoutesBuckets.DELETE("/delete", s.HandleBucketDelete(), s.requireBucketPermission(permOwner), withCredentials, readOnly)
+
 		if s.Config.Server.IsIAMMode() {
 			apiRoutesBuckets.GET("/detail", s.HandleIAMBucketDetail(), s.requireBucketPermission(permRead))
+
+			// Bare refusals, with no permission gate and no credential in front of
+			// them. Both handlers reach the gateway through the RGW ADMIN API, and
+			// the panel holds no admin credential in iam mode — the same reason
+			// HandleObjectList was given an iam branch. Registering them with the
+			// usual chain meant /bucket/delete authorized the caller and minted a
+			// readwrite credential only to fail with 422 from NewRadosClient.
+			apiRoutesBuckets.GET("/quota", s.bucketQuotaHandler())
+			apiRoutesBuckets.DELETE("/delete", s.bucketDeleteHandler(), readOnly)
+		} else {
+			apiRoutesBuckets.GET("/quota", s.bucketQuotaHandler(), s.gatewayChain(permRead, reading)...)
+			apiRoutesBuckets.DELETE("/delete", s.bucketDeleteHandler(), s.gatewayChain(permOwner, mutating)...)
 		}
 	}
 
-	// Everything under /object reaches the gateway, so every route here takes
-	// both the permission check and a credential.
-	//
-	// withCredentials is listed AFTER the permission check on purpose, and lives
-	// on the routes rather than the group for the same reason: group middleware
-	// runs first in echo, and the credential to mint depends on which TENANT the
-	// bucket belongs to — something only the permission check knows, because it
-	// is what resolves the bucket. Hoisting it back onto the group would silently
-	// return to one credential per session, which strands anyone whose buckets
-	// span tenants.
+	// Everything under /object reaches the gateway, so every route here takes the
+	// full chain. gatewayChain is what fixes its order; see the comment there.
 	apiRoutesObjects := apiRoutes.Group("/object", region)
 	{
-		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.requireBucketPermission(permRead), withCredentials)
-		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.requireBucketPermission(permWrite), withCredentials, readOnly)
-		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.requireBucketPermission(permRead), withCredentials)
-		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.requireBucketPermission(permRead), withCredentials)
-		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.requireBucketPermission(permWrite), withCredentials, readOnly)
-		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.requireBucketPermission(permRead), withCredentials)
+		apiRoutesObjects.GET("/list", s.HandleObjectList(), s.gatewayChain(permRead, reading)...)
+		apiRoutesObjects.POST("/upload", s.HandleObjectUpload(), s.gatewayChain(permWrite, mutating)...)
+		apiRoutesObjects.GET("/download", s.HandleObjectDownload(), s.gatewayChain(permRead, reading)...)
+		apiRoutesObjects.GET("/head", s.HandleObjectHead(), s.gatewayChain(permRead, reading)...)
+		apiRoutesObjects.DELETE("/delete", s.HandleObjectsDelete(), s.gatewayChain(permWrite, mutating)...)
+		// Counted as mutating even though it only reads: a share link hands out
+		// access that outlives the request, which is not what "browsing and
+		// downloads stay intact" covers — and the config comment on ReadOnly and
+		// the README both already say read-only refuses share links.
+		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.gatewayChain(permRead, mutating)...)
 	}
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)
 	{
 		// In iam mode /quota is refused and /id answers from the session, so
-		// neither needs a storage credential.
-		apiRoutesUsers.GET("/quota", s.userQuotaHandler(), withCredentials)
+		// neither needs a storage credential — and neither carries one. Attaching
+		// withCredentials here would ask the control endpoint to mint without a
+		// bucket on every poll of an endpoint that cannot use the result.
+		apiRoutesUsers.GET("/quota", s.userQuotaHandler())
 		apiRoutesUsers.GET("/id", s.userIdentificationHandler())
 	}
+}
+
+// Whether a route changes the storage backend, for gatewayChain's second
+// argument. Named rather than a bare bool so the call sites say which they are.
+const (
+	mutating = true
+	reading  = false
+)
+
+// gatewayChain is the middleware a route takes when it signs a call to the
+// gateway, in the order echo applies it (left to right).
+//
+// The order is the whole point of having this in one place:
+//
+//  1. refuseWhenReadOnly, FIRST, on a route that changes anything. Listed after
+//     the credential it used to mint a real readwrite credential at the storage
+//     backend and only then return 403 — so a loop of deletes against a
+//     read-only panel produced an unbounded stream of write-capable credentials
+//     for the operator to reap.
+//  2. requireBucketPermission, which authorizes the caller and resolves the
+//     bucket.
+//  3. injectObjectCredentials, which needs the bucket step 2 resolved: a
+//     credential is minted against the account that OWNS the bucket. This is why
+//     the chain lives on the routes and not on the group — group middleware runs
+//     before route middleware, so hoisting it would mint before the bucket was
+//     known, i.e. one credential per session again.
+//
+// In s3 mode every element is a no-op: the gateway is the authority there,
+// because each request is signed with the user's own credentials.
+func (s *Server) gatewayChain(permission string, changesTheBackend bool) []echo.MiddlewareFunc {
+	chain := make([]echo.MiddlewareFunc, 0, 3)
+	if changesTheBackend {
+		chain = append(chain, s.refuseWhenReadOnly())
+	}
+	return append(chain, s.requireBucketPermission(permission), s.injectObjectCredentials())
 }
 
 // userIdentificationHandler answers "who am I" from whichever identity the
@@ -292,6 +338,39 @@ func (s *Server) userQuotaHandler() echo.HandlerFunc {
 		}
 	}
 	return s.HandleUserQuota()
+}
+
+// bucketQuotaHandler reports per-bucket quota across the caller's buckets, which
+// only exists in s3 mode.
+//
+// The s3 handler resolves the caller's RADOS uid through the admin API with the
+// panel's admin keys, and in iam mode the panel has none — it holds only a
+// short-lived credential minted for one owning account. The control endpoint
+// already reports a bucket's usage and quota, which /bucket/detail serves.
+func (s *Server) bucketQuotaHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusNotImplemented,
+				"per-user bucket quota does not apply in iam auth mode; see per-bucket quota on /bucket/detail")
+		}
+	}
+	return s.HandleBucketQuota()
+}
+
+// bucketDeleteHandler disables bucket deletion in iam mode.
+//
+// Deleting a bucket goes through the RGW admin API — the emptiness check and the
+// delete both do — and the panel holds no admin credential in iam mode. Removing
+// a bucket is also provisioning, which belongs with whatever created it, for the
+// same reason bucketCreateHandler gives.
+func (s *Server) bucketDeleteHandler() echo.HandlerFunc {
+	if s.Config.Server.IsIAMMode() {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusForbidden,
+				"bucket deletion is not available in iam auth mode; remove buckets through your storage operator")
+		}
+	}
+	return s.HandleBucketDelete()
 }
 
 // bucketCreateHandler disables bucket creation in iam mode.

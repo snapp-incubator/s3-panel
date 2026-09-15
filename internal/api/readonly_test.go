@@ -91,3 +91,66 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
+
+// TestReadOnlyRefusesBeforeMinting is the ordering regression.
+//
+// Echo applies route middleware left to right, and with the credential listed
+// first an upload or delete on a read-only panel performed a real STS mint of a
+// READWRITE credential at the storage backend and only then returned 403. That
+// contradicts the stated design and is a cost amplifier: a loop of deletes
+// produces an unbounded stream of write-capable credentials to reap.
+//
+// Driven through gatewayChain rather than a hand-composed chain, so this fails
+// if the routes' order is changed rather than only if this test's is.
+func TestReadOnlyRefusesBeforeMinting(t *testing.T) {
+	s, rec, done := credentialServer(t)
+	defer done()
+	s.Config.Server.ReadOnly = true
+
+	reached := false
+	handler := func(c echo.Context) error {
+		reached = true
+		return c.NoContent(http.StatusOK)
+	}
+	for _, m := range reverse(s.gatewayChain(permWrite, mutating)) {
+		handler = m(handler)
+	}
+
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodDelete, "/object/delete?bucket=okd4_teh_1__payments--invoices", nil)
+	err := handler(withSession(e.NewContext(req, httptest.NewRecorder())))
+
+	if reached {
+		t.Fatal("the handler ran on a read-only panel")
+	}
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok || httpErr.Code != http.StatusForbidden {
+		t.Fatalf("error = %v, want 403", err)
+	}
+	if got := rec.seen(); len(got) != 0 {
+		t.Errorf("minted %v before refusing; a read-only panel asked the backend for a write credential", got)
+	}
+}
+
+// reverse composes a middleware slice the way echo does: the first element ends
+// up outermost, so it is wrapped last.
+func reverse(chain []echo.MiddlewareFunc) []echo.MiddlewareFunc {
+	out := make([]echo.MiddlewareFunc, 0, len(chain))
+	for i := len(chain) - 1; i >= 0; i-- {
+		out = append(out, chain[i])
+	}
+	return out
+}
+
+// TestShareIsRefusedWhenReadOnly: the config comment on ReadOnly, the README and
+// the PR description all say read-only refuses share links, and the route was
+// the one mutating-by-policy route that did not carry the check.
+func TestShareIsRefusedWhenReadOnly(t *testing.T) {
+	s := &Server{Config: config.Config{Server: config.ServerConfig{ReadOnly: true}}}
+	if len(s.gatewayChain(permRead, mutating)) != 3 {
+		t.Fatal("a mutating route's chain must carry the read-only refusal")
+	}
+	if len(s.gatewayChain(permRead, reading)) != 2 {
+		t.Error("a reading route must not carry the read-only refusal; browsing stays intact")
+	}
+}
