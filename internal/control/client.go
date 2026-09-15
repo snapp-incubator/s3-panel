@@ -102,12 +102,39 @@ func (b Bucket) DisplayName() string {
 	return b.Name
 }
 
-// Can reports whether the caller holds a permission on this bucket. An endpoint
-// that reports no permissions at all is treated as permissive, so a stock S3
-// service still works: it has already decided access by answering the call.
+// GatewayName is the name the S3 gateway knows this bucket by: the endpoint's
+// own S3Name when it reports one, otherwise the name it listed.
+//
+// A control endpoint may legitimately omit S3Name — a plain S3 implementation
+// leaves these extra elements empty — and the panel must still address the
+// bucket by something the gateway recognises rather than skipping the rewrite.
+func (b Bucket) GatewayName() string {
+	if b.S3Name != "" {
+		return b.S3Name
+	}
+	return b.Name
+}
+
+// permissionRead is the only permission implied by an endpoint that reports
+// none. It matches the panel's own permRead.
+const permissionRead = "read"
+
+// Can reports whether the caller holds a permission on this bucket.
+//
+// An endpoint that reports no permissions at all is treated as READ-only, not as
+// permissive. A stock S3 service still works — it has already decided access by
+// answering the call, and browsing is all the panel asks of it — but an empty
+// list can no longer authorize a mutation.
+//
+// The difference matters because in iam mode this is the only enforcement point:
+// the minted credential is scoped to an owning ACCOUNT, not to a bucket, so
+// nothing downstream re-checks. Treating empty as permissive meant a control
+// endpoint that dropped <Permissions>, or renamed the element so the silent XML
+// decode yielded an empty slice, handed owner — the sole gate on
+// DELETE /bucket/delete — to everyone who could see the bucket.
 func (b Bucket) Can(permission string) bool {
 	if len(b.Permissions) == 0 {
-		return true
+		return strings.EqualFold(permission, permissionRead)
 	}
 	for _, p := range b.Permissions {
 		if strings.EqualFold(p, permission) {
@@ -233,6 +260,14 @@ func (c *Client) BucketPolicy(ctx context.Context, token, bucket, region string)
 			return nil, nil
 		}
 		return nil, err
+	}
+	// An empty 200 — or a 200 carrying XML, which some gateways answer ?policy
+	// with — is "this bucket has no policy", the same ordinary state as
+	// NoSuchBucketPolicy. Returned as a document it would be a non-nil,
+	// zero-length RawMessage whose own MarshalJSON then fails ("unexpected end of
+	// JSON input"), turning the whole bucket detail response into a 500.
+	if !json.Valid(body) {
+		return nil, nil
 	}
 	return json.RawMessage(body), nil
 }

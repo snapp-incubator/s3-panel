@@ -80,14 +80,31 @@ func TestBucketFields(t *testing.T) {
 		t.Error("Can returned true for a permission that is not held")
 	}
 
+	if got := tenanted.GatewayName(); got != "okd4_teh_1__payments:exports" {
+		t.Errorf("GatewayName = %q, want the gateway spelling", got)
+	}
+
 	// A plain S3 endpoint reports no permissions; it has already decided access
-	// by answering the call at all, so the panel must not hide everything.
+	// by answering the call at all, so the panel must not hide everything — but
+	// an empty list must not authorize a mutation either. In iam mode Can is the
+	// ONLY gate, so "no permissions reported" has to mean read and nothing more:
+	// an endpoint that drops <Permissions>, or renames the element so the silent
+	// XML decode yields an empty slice, would otherwise hand owner — the sole
+	// gate on DELETE /bucket/delete — to everyone who can see the bucket.
 	plain := Bucket{Name: "data"}
-	if !plain.Can("owner") {
-		t.Error("a bucket with no reported permissions should not be treated as forbidden")
+	if !plain.Can("read") {
+		t.Error("a bucket with no reported permissions should still be readable")
+	}
+	if plain.Can("write") || plain.Can("owner") {
+		t.Error("an empty permission list must not authorize a mutation")
 	}
 	if got := plain.DisplayName(); got != "data" {
 		t.Errorf("DisplayName = %q", got)
+	}
+	// With no S3Name reported the gateway name falls back to the listed name,
+	// so the rewrite still has something the gateway recognises to write.
+	if got := plain.GatewayName(); got != "data" {
+		t.Errorf("GatewayName = %q, want the listed name as the fallback", got)
 	}
 }
 
@@ -314,5 +331,61 @@ func TestSessionCredentialsOmitsAnEmptyBucket(t *testing.T) {
 	}
 	if present {
 		t.Error("an empty bucket was sent as a form field; it must be omitted")
+	}
+}
+
+// TestEmptyPolicyBodyIsNotAPolicy.
+//
+// io.ReadAll on an empty 200 yields a NON-NIL zero-length slice, so returning it
+// as a document made the caller believe the bucket had a policy. Marshalling
+// that RawMessage then fails ("unexpected end of JSON input"), which fails the
+// whole JSON response — so /bucket/detail answered 500 instead of rendering "no
+// policy". A 200 carrying XML, which some gateways answer ?policy with, lands
+// the same way.
+func TestEmptyPolicyBodyIsNotAPolicy(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty": "",
+		"xml":   `<?xml version="1.0"?><NotAPolicy/>`,
+		"blank": "   \n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+
+			client, err := New(srv.URL, srv.URL, time.Second)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			policy, err := client.BucketPolicy(context.Background(), "t", "bucket", "")
+			if err != nil {
+				t.Fatalf("BucketPolicy: %v", err)
+			}
+			if policy != nil {
+				t.Errorf("policy = %q, want nil — this bucket has no policy", policy)
+			}
+		})
+	}
+}
+
+// TestPolicyDocumentIsReturned: the ordinary case must keep working.
+func TestPolicyDocumentIsReturned(t *testing.T) {
+	const doc = `{"Version":"2012-10-17","Statement":[]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(doc))
+	}))
+	defer srv.Close()
+
+	client, err := New(srv.URL, srv.URL, time.Second)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	policy, err := client.BucketPolicy(context.Background(), "t", "bucket", "")
+	if err != nil {
+		t.Fatalf("BucketPolicy: %v", err)
+	}
+	if string(policy) != doc {
+		t.Errorf("policy = %q, want the document verbatim", policy)
 	}
 }
