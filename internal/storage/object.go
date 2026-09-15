@@ -1,8 +1,13 @@
 package storage
 
+import "time"
+
 type ObjectListRequestMeta struct {
-	AccessKey    string `header:"access_key"   validate:"required"`
-	SecretKey    string `header:"secret_key"   validate:"required"`
+	AccessKey string `header:"access_key"   validate:"required"`
+	SecretKey string `header:"secret_key"   validate:"required"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string `header:"session_token"`
 	Bucket       string `query:"bucket"        validate:"required"`
 	Page         int32  `query:"page"          validate:"required"`
 	MaxKeys      int32  `query:"max_keys"      validate:"required"`
@@ -11,25 +16,40 @@ type ObjectListRequestMeta struct {
 }
 
 type ObjectDeleteRequestMeta struct {
-	AccessKey string   `header:"access_key" validate:"required"`
-	SecretKey string   `header:"secret_key" validate:"required"`
-	Bucket    string   `query:"bucket"      validate:"required"`
-	Objects   []string `query:"objects"      validate:"required"`
+	AccessKey string `header:"access_key" validate:"required"`
+	SecretKey string `header:"secret_key" validate:"required"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string   `header:"session_token"`
+	Bucket       string   `query:"bucket"      validate:"required"`
+	Objects      []string `query:"objects"      validate:"required"`
 }
 
 type ObjectRequestMeta struct {
-	AccessKey  string `header:"access_key" validate:"required"`
-	SecretKey  string `header:"secret_key" validate:"required"`
-	Bucket     string `query:"bucket"      validate:"required"`
-	Object     string `query:"object"      validate:"required"`
-	Expiration string `query:"expiration"`
+	AccessKey string `header:"access_key" validate:"required"`
+	SecretKey string `header:"secret_key" validate:"required"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string `header:"session_token"`
+	Bucket       string `query:"bucket"      validate:"required"`
+	Object       string `query:"object"      validate:"required"`
+	Expiration   string `query:"expiration"`
+	// MaxExpiration caps a presigned URL's lifetime. Set by the server, never by
+	// the caller: in iam mode the URL is signed with a short-lived credential and
+	// stops working the moment that credential lapses, however long the caller
+	// asked for. Zero means "no cap", which is the s3 mode case, where the URL is
+	// signed with the user's own long-lived keys.
+	MaxExpiration time.Duration
 }
 
 type ObjectUploadRequestMeta struct {
 	AccessKey string `header:"access_key" validate:"required"`
 	SecretKey string `header:"secret_key" validate:"required"`
-	Bucket    string `form:"bucket"       validate:"required"`
-	Prefix    string `form:"prefix"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string `header:"session_token"`
+	Bucket       string `form:"bucket"       validate:"required"`
+	Prefix       string `form:"prefix"`
 }
 
 type ObjectListBody struct {

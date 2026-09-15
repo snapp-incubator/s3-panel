@@ -28,7 +28,7 @@ func (c CephObjectStorage) ObjectsDelete(serverAdminConfig config.ObjectStorageC
 		return storage.ObjectDeleteResponse{}, storage.HTTPErrorWithCode{Code: http.StatusBadRequest, Message: fmt.Errorf("you should specify at least one object")}
 	}
 
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.ObjectDeleteResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -65,7 +65,7 @@ func (c CephObjectStorage) ObjectsDelete(serverAdminConfig config.ObjectStorageC
 func (c CephObjectStorage) ObjectDownload(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectRequestMeta) (storage.ObjectDownloadResponse, storage.HTTPErrorWithCode) {
 	expiration := PreSignDownloadExpiration
 
-	preSignClient, err := c.NewPreSignClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, expiration)
+	preSignClient, err := c.NewPreSignClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken, expiration)
 	if err != nil {
 		return storage.ObjectDownloadResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -83,7 +83,7 @@ func (c CephObjectStorage) ObjectDownload(serverAdminConfig config.ObjectStorage
 }
 
 func (c CephObjectStorage) ObjectList(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectListRequestMeta) (storage.ObjectListResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.ObjectListResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -237,7 +237,7 @@ func (c CephObjectStorage) objectListSearch(client *s3.Client, meta storage.Obje
 }
 
 func (c CephObjectStorage) ObjectUpload(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectUploadRequestMeta, file *multipart.FileHeader) (storage.ObjectUploadResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.ObjectUploadResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -339,7 +339,7 @@ func (c CephObjectStorage) ObjectUpload(serverAdminConfig config.ObjectStorageCo
 }
 
 func (c CephObjectStorage) ObjectHead(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectRequestMeta) (storage.ObjectHeadResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.ObjectHeadResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -366,8 +366,15 @@ func (c CephObjectStorage) ObjectShare(serverAdminConfig config.ObjectStorageCon
 	if errConvert != nil {
 		return storage.ObjectShareResponse{}, storage.HTTPErrorWithCode{Code: http.StatusUnprocessableEntity, Message: errConvert}
 	}
+	// A link cannot outlive the credential that signed it. Without this a caller
+	// asking for 24h — accepted, there is no upper bound — receives a URL that
+	// silently starts answering 403 as soon as the short-lived credential behind
+	// it lapses, which in iam mode is within the hour.
+	if meta.MaxExpiration > 0 && expiration > meta.MaxExpiration {
+		expiration = meta.MaxExpiration
+	}
 
-	preSignClient, err := c.NewPreSignClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, expiration)
+	preSignClient, err := c.NewPreSignClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken, expiration)
 	if err != nil {
 		return storage.ObjectShareResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
