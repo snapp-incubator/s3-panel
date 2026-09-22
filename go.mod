@@ -5,8 +5,8 @@ go 1.27.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
-	github.com/aws/smithy-go v1.28.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.2
+	github.com/aws/smithy-go v1.28.2
 	github.com/ceph/go-ceph v0.41.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-playground/validator v9.31.0+incompatible
@@ -20,7 +20,7 @@ require (
 	github.com/swaggo/echo-swagger v1.5.2
 	github.com/swaggo/swag v1.16.6
 	github.com/tidwall/pretty v1.2.1
-	github.com/urfave/cli/v3 v3.12.0
+	github.com/urfave/cli/v3 v3.13.0
 	go.uber.org/automaxprocs v1.6.0
 	go.uber.org/zap v1.28.0
 	golang.org/x/oauth2 v0.37.0
@@ -56,7 +56,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.29.2 // indirect
 	github.com/go-openapi/swag/yamlutils v0.29.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
-	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-playground/universal-translator v0.18.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/knadh/koanf/maps v0.1.3 // indirect
 	github.com/labstack/gommon v0.5.0 // indirect
