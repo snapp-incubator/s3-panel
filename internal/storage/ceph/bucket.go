@@ -16,7 +16,7 @@ import (
 )
 
 func (c CephObjectStorage) BucketCreate(serverAdminConfig config.ObjectStorageConfig, meta storage.BucketActionRequestMeta) (storage.BucketCreateResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.BucketCreateResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -39,7 +39,7 @@ func (c CephObjectStorage) BucketCreate(serverAdminConfig config.ObjectStorageCo
 }
 
 func (c CephObjectStorage) BucketDelete(serverAdminConfig config.ObjectStorageConfig, meta storage.BucketActionRequestMeta) (storage.BucketDeleteResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.BucketDeleteResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}
@@ -59,7 +59,7 @@ func (c CephObjectStorage) BucketDelete(serverAdminConfig config.ObjectStorageCo
 }
 
 func (c CephObjectStorage) BucketList(serverAdminConfig config.ObjectStorageConfig, meta storage.BucketListAndQuotaRequestMeta) (storage.BucketListResponse, storage.HTTPErrorWithCode) {
-	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey)
+	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
 		return storage.BucketListResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errors.New(messages.FailedToCreateClient)}
 	}

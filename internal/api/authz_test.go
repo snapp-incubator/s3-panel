@@ -352,3 +352,82 @@ func TestResolvedBucketIsPublishedForLaterMiddleware(t *testing.T) {
 		t.Fatalf("tenant = %q, want okd4_teh_1__payments", tenant)
 	}
 }
+
+// TestBareBucketNameIsNotResolved: RealName is the bare bucket name, unique
+// within a tenant and nothing more.
+//
+// Accepting it made resolution ambiguous across tenants: a caller holding
+// tenantA--exports (read) and tenantB--exports (write) who asked for "exports"
+// got whichever the endpoint listed first — the write refused, or performed
+// against the other tenant's bucket, with a credential minted for the wrong
+// owning account and no signal either way.
+func TestBareBucketNameIsNotResolved(t *testing.T) {
+	s, done := iamModeServer(t)
+	defer done()
+
+	handler := func(c echo.Context) error { return c.NoContent(http.StatusOK) }
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/object/list?bucket=exports", nil)
+	c := withSession(e.NewContext(req, httptest.NewRecorder()))
+
+	err := s.requireBucketPermission(permRead)(handler)(c)
+
+	httpErr, ok := err.(*echo.HTTPError)
+	if !ok || httpErr.Code != http.StatusNotFound {
+		t.Fatalf("error = %v, want 404 — the bare name must not resolve to a tenanted bucket", err)
+	}
+}
+
+// TestRewriteFallsBackToTheListedName: a control endpoint may legitimately omit
+// S3Name — "a plain S3 implementation simply leaves them empty" — and the guard
+// that skipped the rewrite in that case handed the control-plane identifier
+// straight to the S3 client, which answers NoSuchBucket.
+func TestRewriteFallsBackToTheListedName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<?xml version="1.0"?>
+<ListAllMyBucketsResult><Buckets><Bucket>
+  <Name>reports</Name><RealName>reports</RealName>
+  <Permissions><Permission>read</Permission></Permissions>
+</Bucket></Buckets></ListAllMyBucketsResult>`))
+	}))
+	defer srv.Close()
+
+	client, err := control.New(srv.URL, srv.URL, time.Second)
+	if err != nil {
+		t.Fatalf("control.New: %v", err)
+	}
+	s := &Server{
+		Config:  config.Config{Server: config.ServerConfig{AuthMode: config.AuthModeIAM}},
+		control: client,
+		logger:  zap.NewNop(),
+	}
+
+	// The upload binds `bucket` from the FORM, so the rewrite has to reach it
+	// there too — the query and the form only stay in sync today because Go
+	// happens to order query values first in r.Form.
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("bucket", "reports"); err != nil {
+		t.Fatalf("WriteField: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	var queryName, formName string
+	handler := func(c echo.Context) error {
+		queryName, formName = c.QueryParam("bucket"), c.FormValue("bucket")
+		return c.NoContent(http.StatusOK)
+	}
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodPost, "/object/upload?bucket=reports", body)
+	req.Header.Set(echo.HeaderContentType, writer.FormDataContentType())
+	c := withSession(e.NewContext(req, httptest.NewRecorder()))
+
+	if err := s.requireBucketPermission(permRead)(handler)(c); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if queryName != "reports" || formName != "reports" {
+		t.Errorf("query=%q form=%q, want both to be the gateway name", queryName, formName)
+	}
+}

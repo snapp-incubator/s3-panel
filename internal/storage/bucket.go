@@ -4,12 +4,18 @@ package storage
 type BucketActionRequestMeta struct {
 	AccessKey string `header:"access_key" validate:"required"`
 	SecretKey string `header:"secret_key" validate:"required"`
-	Bucket    string `query:"bucket"      validate:"required"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string `header:"session_token"`
+	Bucket       string `query:"bucket"      validate:"required"`
 }
 
 type BucketListAndQuotaRequestMeta struct {
-	AccessKey    string `header:"access_key"   validate:"required"`
-	SecretKey    string `header:"secret_key"   validate:"required"`
+	AccessKey string `header:"access_key"   validate:"required"`
+	SecretKey string `header:"secret_key"   validate:"required"`
+	// SessionToken accompanies a short-lived credential. Empty for the
+	// long-lived keys a user types in s3 mode, so it is never required.
+	SessionToken string `header:"session_token"`
 	MaxKeys      int32  `query:"max_keys" validate:"required"`
 	Page         int32  `query:"page" validate:"required"`
 	SearchString string `query:"search_string"`

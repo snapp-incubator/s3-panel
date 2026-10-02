@@ -14,7 +14,7 @@ type HTTPErrorWithCode struct {
 }
 
 type ObjectStorage interface {
-	NewClient(endpoint, accessKey, secretKey string) (*s3.Client, error)
+	NewClient(endpoint, accessKey, secretKey, sessionToken string) (*s3.Client, error)
 
 	ObjectsDelete(cfg config.ObjectStorageConfig, meta ObjectDeleteRequestMeta) (ObjectDeleteResponse, HTTPErrorWithCode)
 	ObjectDownload(cfg config.ObjectStorageConfig, meta ObjectRequestMeta) (ObjectDownloadResponse, HTTPErrorWithCode)

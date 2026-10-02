@@ -34,6 +34,10 @@ type Authenticator struct {
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
 	codec    *CookieCodec
+
+	// Collapses concurrent and near-concurrent access-token refreshes, so one
+	// refresh token is never redeemed twice. See refreshShared.
+	refreshGroupFields
 }
 
 // New builds an Authenticator, discovering the provider's endpoints.
@@ -65,10 +69,11 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Authenticator, error) {
 	scopes := append([]string{oidc.ScopeOpenID}, cfg.Scopes...)
 
 	return &Authenticator{
-		cfg:      cfg,
-		provider: provider,
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
-		codec:    codec,
+		cfg:                cfg,
+		refreshGroupFields: refreshGroupFields{refreshMemo: newRefreshMemo()},
+		provider:           provider,
+		verifier:           provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
+		codec:              codec,
 		oauth: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -206,7 +211,7 @@ func (a *Authenticator) Load(c echo.Context) (Session, bool) {
 		return session, true
 	}
 
-	refreshed, err := a.refresh(c.Request().Context(), session)
+	refreshed, err := a.refreshShared(c.Request().Context(), session)
 	if err != nil {
 		// The refresh token is spent or revoked: the sign-in is over, and the
 		// user has to authenticate again.

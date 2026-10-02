@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -435,6 +436,14 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 			return c.JSON(http.StatusUnprocessableEntity, storage.OperationErrWithMsg{Message: "Object does not exist"})
 		}
 
+		// Set after binding, so the cap is the server's and not something a
+		// caller can raise by sending the field itself.
+		req.MaxExpiration = shareExpiryCap(c)
+		if req.MaxExpiration < 0 {
+			return c.JSON(http.StatusConflict, storage.OperationErrWithMsg{
+				Message: "the storage credential for this request is about to expire; retry the share"})
+		}
+
 		url, errObjShare := s.store.ObjectShare(s.Config.ObjectStorage, req)
 		if errObjShare.Message != nil {
 			s.logger.Error(errObjShare.Message.Error())
@@ -442,4 +451,22 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 		}
 		return c.JSON(http.StatusOK, url)
 	}
+}
+
+// shareExpiryCap is the longest a share link may live: what remains of the
+// credential that will sign it.
+//
+// Zero when nothing caps it — s3 mode, where the link is signed with the user's
+// own long-lived keys. Negative when the credential has already lapsed, which
+// the handler reports rather than signing a URL that is dead on arrival.
+func shareExpiryCap(c echo.Context) time.Duration {
+	expiresAt, ok := credentialExpiry(c)
+	if !ok {
+		return 0
+	}
+	remaining := time.Until(expiresAt)
+	if remaining <= 0 {
+		return -1
+	}
+	return remaining
 }
