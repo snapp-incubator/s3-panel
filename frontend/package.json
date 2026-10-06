@@ -44,7 +44,7 @@
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",
     "dayjs": "^1.11.23",
-    "framer-motion": "^13.4.4",
+    "framer-motion": "^14.0.0",
     "i18next": "^26.4.2",
     "jalaliday": "^3.1.1",
     "lucide-react": "^1.48.0",
