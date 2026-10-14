@@ -10,6 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/snapp-incubator/S3-Panel/internal/auth"
+	"github.com/snapp-incubator/S3-Panel/internal/config"
 	"github.com/snapp-incubator/S3-Panel/internal/control"
 )
 
@@ -135,8 +136,6 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 				return echo.NewHTTPError(http.StatusUnauthorized, "authentication required")
 			}
 
-			region := s.requestRegion(c)
-
 			// Which bucket this request is for, from the authorization middleware
 			// that already resolved it.
 			//
@@ -162,6 +161,15 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 				return next(c)
 			}
 			tenant, bucket := b.Tenant, b.Name
+
+			// The region the bucket LIVES in, not the one the request header
+			// carries. The control endpoint mints only for a bucket in the
+			// region asked, and the browser always sent its default region — so
+			// every bucket outside it was refused, and its objects never listed.
+			region := b.BucketRegion
+			if region == "" {
+				region = s.requestRegion(c)
+			}
 
 			// The level this ROUTE needs, not the level this user could reach. A
 			// listing is signed with a credential that cannot write, even for
@@ -202,6 +210,15 @@ func (s *Server) injectObjectCredentials() echo.MiddlewareFunc {
 			// share handler clamps its expiry to what is left here.
 			c.Set(credentialExpiryKey, cred.Expiration)
 
+			// Where the bucket's objects are. A bucket in another region does not
+			// exist on this instance's gateway, so its calls go to the gateway
+			// the control endpoint named for that region. This instance's own
+			// region keeps the gateway it is configured with, which is known to
+			// be reachable from here and from the browser.
+			if cred.Endpoint != "" && !strings.EqualFold(region, s.Config.Server.Region) {
+				c.Set(gatewayEndpointKey, cred.Endpoint)
+			}
+
 			return next(c)
 		}
 	}
@@ -216,6 +233,22 @@ const credentialExpiryKey = "iam.credential_expiry"
 func credentialExpiry(c echo.Context) (time.Time, bool) {
 	at, ok := c.Get(credentialExpiryKey).(time.Time)
 	return at, ok && !at.IsZero()
+}
+
+// gatewayEndpointKey is where injectObjectCredentials leaves the gateway of the
+// region a bucket lives in, when that is not this instance's own.
+const gatewayEndpointKey = "iam.gateway_endpoint"
+
+// gatewayConfig is the object-storage configuration a request's gateway calls
+// use: the configured gateway, with its URL swapped for the bucket's regional
+// gateway when injectObjectCredentials named one. In s3 mode nothing names one,
+// and every call goes to the configured gateway as before.
+func (s *Server) gatewayConfig(c echo.Context) config.ObjectStorageConfig {
+	cfg := s.Config.ObjectStorage
+	if endpoint, ok := c.Get(gatewayEndpointKey).(string); ok && endpoint != "" {
+		cfg.URL = endpoint
+	}
+	return cfg
 }
 
 // stripClientCredentials clears the storage-credential headers off every

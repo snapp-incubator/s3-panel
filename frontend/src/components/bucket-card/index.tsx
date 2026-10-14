@@ -12,6 +12,7 @@ import {
 import { Progress } from '@/components/shadcn/progress'
 import { useToast } from '@/hooks/use-toast'
 import useDeleteBucket from '@/hooks/useDeleteBucket'
+import useS3Credentials from '@/hooks/useS3Credentials'
 import { t } from '@/i18n'
 import { calculateValue, copyString, timeAgo } from '@/lib/utils'
 import type { TBucketResponse } from '@/types/s3/buckets.types'
@@ -25,6 +26,7 @@ import {
 } from '../shadcn/tooltip'
 
 import DeleteBucket from './delete-bucket'
+import RegionBadge from './region-badge'
 
 const usageColor = (pct: number) => {
   if (pct >= 90) return 'bg-red-500'
@@ -36,6 +38,8 @@ const num = (n: number) => n.toLocaleString()
 
 const BucketCard = (bucket: TBucketResponse) => {
   const navigate = useNavigate()
+  // s3 mode lists one region at a time: the one these credentials signed in to.
+  const region = useS3Credentials(state => state.region)
 
   const storageLimited = bucket.quota_enabled && bucket.hard_bytes_raw > 0
   const pct = storageLimited
@@ -72,10 +76,13 @@ const BucketCard = (bucket: TBucketResponse) => {
             </TooltipProvider>
             <CopyButton name={bucket.bucket} />
           </div>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {bucket.access} · {t('modified')}{' '}
-            {timeAgo(bucket.modify_time_stamp)}
-          </p>
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            <RegionBadge region={region} />
+            <p className="truncate text-xs text-muted-foreground">
+              {bucket.access} · {t('modified')}{' '}
+              {timeAgo(bucket.modify_time_stamp)}
+            </p>
+          </div>
         </div>
         <BucketMenu bucket={bucket.bucket} />
       </div>

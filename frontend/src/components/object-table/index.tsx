@@ -48,6 +48,7 @@ export default function ObjectTable({
   isError,
   isLoading,
   bucket,
+  region,
   currentPath,
   objectList,
   isSearch,
@@ -57,7 +58,7 @@ export default function ObjectTable({
 }: TObjectTablesProps) {
   return (
     <div>
-      {isError || (!isLoading && !objectList?.items) ? (
+      {isError || (!isLoading && !objectList?.items?.length) ? (
         <div className="p-4">
           <Alert>
             <AlertCircle className="size-5 !text-blue-400" />
@@ -132,9 +133,14 @@ export default function ObjectTable({
                         <DeleteObject
                           object={objectKey}
                           bucket={bucket}
+                          region={region}
                           refetchObjects={refetchObjects}
                         />
-                        <DownloadObject bucket={bucket} object={objectKey} />
+                        <DownloadObject
+                          bucket={bucket}
+                          object={objectKey}
+                          region={region}
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

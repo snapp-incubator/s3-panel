@@ -6,11 +6,11 @@ import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
 import { useToast } from './use-toast'
 
-const useDownloadObject = (downloadLink: string) => {
+const useDownloadObject = (bucket: string, object: string, region?: string) => {
   const { toast } = useToast()
 
   return useMutation({
-    mutationFn: () => downloadObject(downloadLink),
+    mutationFn: () => downloadObject(bucket, object, region),
     onSuccess: res => {
       const url = res.url
 

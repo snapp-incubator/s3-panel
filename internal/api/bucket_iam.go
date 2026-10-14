@@ -44,10 +44,12 @@ type IAMBucketItem struct {
 // IAMBucketListResponse is the AuthModeIAM bucket listing. It spans every region
 // the control endpoint knows about, in one response.
 type IAMBucketListResponse struct {
-	Items        []IAMBucketItem `json:"items"`
-	Regions      []string        `json:"regions"`
-	TotalBuckets int             `json:"total_buckets"`
-	TotalPages   int             `json:"total_pages"`
+	Items []IAMBucketItem `json:"items"`
+	// Regions is every region the caller has buckets in, whatever the listing
+	// was filtered by.
+	Regions      []string `json:"regions"`
+	TotalBuckets int      `json:"total_buckets"`
+	TotalPages   int      `json:"total_pages"`
 }
 
 // HandleIAMBucketList serves GET /bucket/list in AuthModeIAM.
@@ -57,6 +59,7 @@ type IAMBucketListResponse struct {
 //	@Tags			Bucket
 //	@Produce		json
 //	@Param			search_string	query		string						false	"filter by substring"
+//	@Param			region			query		string						false	"only buckets in this region"
 //	@Param			max_keys		query		int							false	"page size"
 //	@Param			page			query		int							false	"page number"
 //	@Success		200				{object}	IAMBucketListResponse		"Buckets the caller may access"
@@ -72,15 +75,22 @@ func (s *Server) HandleIAMBucketList() echo.HandlerFunc {
 		}
 
 		search := strings.ToLower(strings.TrimSpace(c.QueryParam("search_string")))
+		region := strings.TrimSpace(c.QueryParam("region"))
 		items := make([]IAMBucketItem, 0, len(buckets))
 		regionSet := map[string]bool{}
 		for _, b := range buckets {
+			// Collected before any filtering: these are the choices the region
+			// filter offers, and narrowing them to what is already shown would
+			// leave nothing to switch to once one region is picked.
+			if b.BucketRegion != "" {
+				regionSet[b.BucketRegion] = true
+			}
+			if region != "" && !strings.EqualFold(b.BucketRegion, region) {
+				continue
+			}
 			if search != "" && !strings.Contains(strings.ToLower(b.Name), search) &&
 				!strings.Contains(strings.ToLower(b.DisplayName()), search) {
 				continue
-			}
-			if b.BucketRegion != "" {
-				regionSet[b.BucketRegion] = true
 			}
 			items = append(items, newIAMBucketItem(b))
 		}
@@ -152,21 +162,18 @@ func (s *Server) HandleIAMBucketDetail() echo.HandlerFunc {
 			s.logger.Error("control endpoint bucket list failed: " + err.Error())
 			return controlError(err, "could not resolve the bucket")
 		}
-		// Matched on the control-plane identifier or the gateway spelling only,
-		// never on the bare RealName: that is unique within a tenant and nothing
-		// more, so "exports" would resolve to whichever of tenantA--exports and
-		// tenantB--exports the endpoint listed first.
-		var found *control.Bucket
-		for i := range buckets {
-			if buckets[i].Name == name || buckets[i].S3Name == name {
-				found = &buckets[i]
-				break
-			}
-		}
+		// Resolved the way the permission gate resolves it, so the page shows the
+		// bucket the caller opened: see findBucket for why neither the bare name
+		// nor the identifier alone is enough.
+		found := findBucket(buckets, name, region)
 		if found == nil {
 			return c.JSON(http.StatusNotFound, storage.OperationErrWithMsg{Message: "no such bucket"})
 		}
-		if region == "" {
+		// Usage and policy are asked of the region the bucket lives in. The
+		// header only chooses between same-named buckets; it was used as the
+		// region to ask, and the browser always sent its default, so a bucket in
+		// any other region showed another region's numbers or none.
+		if found.BucketRegion != "" {
 			region = found.BucketRegion
 		}
 

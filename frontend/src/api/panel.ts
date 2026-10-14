@@ -1,3 +1,4 @@
+import { inRegion } from '@/api/s3'
 import { withBase } from '@/lib/basePath'
 import centralClient from '@/services/http/centralClient'
 import type {
@@ -85,7 +86,8 @@ const fetchPanelSession = async (): Promise<IPanelSessionResponse> => {
 const fetchIAMBuckets = async (
   maxKeys: number,
   page: number,
-  searchValue?: string
+  searchValue?: string,
+  region?: string
 ): Promise<IIAMBucketListResponse> => {
   const params = new URLSearchParams({
     max_keys: String(maxKeys),
@@ -93,6 +95,7 @@ const fetchIAMBuckets = async (
   })
 
   if (searchValue) params.set('search_string', searchValue)
+  if (region) params.set('region', region)
 
   const res = await centralClient.get<IIAMBucketListResponse>(
     `/s3/api/bucket/list?${params.toString()}`
@@ -103,12 +106,14 @@ const fetchIAMBuckets = async (
 
 /** Object count, size, quota and bucket policy for one bucket. */
 const fetchIAMBucketDetail = async (
-  bucket: string
+  bucket: string,
+  region?: string
 ): Promise<IIAMBucketDetailResponse> => {
   const params = new URLSearchParams({ bucket })
 
   const res = await centralClient.get<IIAMBucketDetailResponse>(
-    `/s3/api/bucket/detail?${params.toString()}`
+    `/s3/api/bucket/detail?${params.toString()}`,
+    inRegion(region ?? '')
   )
 
   return res.data

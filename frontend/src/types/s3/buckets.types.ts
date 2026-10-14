@@ -28,8 +28,13 @@ export interface IBucketObjectResponse {
     size_value: number
     is_folder: boolean
   }[]
+  /** Pages known to exist: this one, plus one when is_truncated. */
   total_pages: number
   total_matched_items?: number
+  /** The listing continues past this page. */
+  is_truncated: boolean
+  /** Fetches the page after this one. Absent on the last page. */
+  next_continuation_token?: string
 }
 
 export interface IUserQuotaResponse {

@@ -2,9 +2,8 @@ package api
 
 import "testing"
 
-// TestTotalPagesMatchesLegacyArithmetic pins the paging the iam-mode listing
-// computes itself against the arithmetic the s3-mode path does inline, so the
-// two cannot drift apart.
+// TestTotalPagesMatchesLegacyArithmetic pins the page count the iam-mode bucket
+// listing reports to the ceiling division the s3-mode listing has always used.
 func TestTotalPagesMatchesLegacyArithmetic(t *testing.T) {
 	cases := []struct{ matched, perPage, want int }{
 		{0, 100, 0},

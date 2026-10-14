@@ -57,62 +57,82 @@ func (s *Server) requireBucketPermission(permission string) echo.MiddlewareFunc 
 				return controlError(err, "could not verify bucket access")
 			}
 
-			for _, b := range buckets {
-				// Matched on the control-plane identifier or the gateway spelling
-				// only, never on RealName. RealName is the BARE bucket name, which
-				// is unique within a tenant and nothing more: a caller holding
-				// tenantA--exports and tenantB--exports who asks for "exports"
-				// would resolve to whichever the endpoint listed first, and the
-				// credential would be minted for the wrong owning account — a write
-				// refused or, worse, performed against the other tenant's bucket,
-				// with no signal either way.
-				if b.Name != bucket && b.S3Name != bucket {
-					continue
-				}
-				if !b.Can(permission) {
-					return echo.NewHTTPError(http.StatusForbidden,
-						"you do not have "+permission+" access to "+bucket)
-				}
-				// Rewrite the bucket to the gateway's own spelling before the
-				// handler binds it.
-				//
-				// The panel addresses a bucket by its control-plane identifier
-				// ("<tenant>--<bucket>"), which is unique across regions and
-				// URL-safe. The gateway has never heard of that name — it wants
-				// "<tenant>:<bucket>" — so handing the identifier straight to the
-				// S3 client makes every object call fail with NoSuchBucket.
-				//
-				// Done here because this is where the bucket has just been
-				// resolved: one lookup answers both "may you?" and "what is it
-				// actually called?", and no handler has to remember either.
-				// Unconditional, and falling back to b.Name when the endpoint
-				// reports no S3Name — a control endpoint may legitimately omit it
-				// (a plain S3 implementation leaves these elements empty), and
-				// skipping the rewrite there handed the control-plane identifier
-				// straight to the S3 client. Rewriting even when the value is
-				// already correct also keeps the query and the multipart form in
-				// sync, which the upload path currently depends on by accident.
-				rewriteBucketParam(c, b.GatewayName())
-
-				// Hand the resolved bucket to whatever runs next. The credential
-				// middleware needs its tenant, and this lookup already paid for the
-				// answer — repeating it there would mean a second round trip to the
-				// control endpoint on every object request.
-				c.Set(resolvedBucketKey, b)
-
-				// Record what this ROUTE needs, not what the user could do. A
-				// listing asks for read even from someone who may write the bucket,
-				// so the credential it is signed with cannot write — the permission
-				// gate stops being the only thing between a bug and a mutation.
-				c.Set(requiredPermissionKey, permission)
-				return next(c)
+			b := findBucket(buckets, bucket, c.Request().Header.Get("region"))
+			if b == nil {
+				// Not in the caller's list. Reported as absent rather than
+				// forbidden so the endpoint cannot be used to enumerate buckets.
+				return echo.NewHTTPError(http.StatusNotFound, "no such bucket")
 			}
+			if !b.Can(permission) {
+				return echo.NewHTTPError(http.StatusForbidden,
+					"you do not have "+permission+" access to "+bucket)
+			}
+			// Rewrite the bucket to the gateway's own spelling before the
+			// handler binds it.
+			//
+			// The panel addresses a bucket by its control-plane identifier
+			// ("<tenant>--<bucket>"), which is URL-safe. The gateway has never
+			// heard of that name — it wants "<tenant>:<bucket>" — so handing the
+			// identifier straight to the S3 client makes every object call fail
+			// with NoSuchBucket.
+			//
+			// Done here because this is where the bucket has just been resolved:
+			// one lookup answers both "may you?" and "what is it actually
+			// called?", and no handler has to remember either. Unconditional,
+			// and falling back to b.Name when the endpoint reports no S3Name — a
+			// control endpoint may legitimately omit it (a plain S3
+			// implementation leaves these elements empty), and skipping the
+			// rewrite there handed the control-plane identifier straight to the
+			// S3 client. Rewriting even when the value is already correct also
+			// keeps the query and the multipart form in sync, which the upload
+			// path currently depends on by accident.
+			rewriteBucketParam(c, b.GatewayName())
 
-			// Not in the caller's list. Reported as absent rather than forbidden so
-			// the endpoint cannot be used to enumerate buckets.
-			return echo.NewHTTPError(http.StatusNotFound, "no such bucket")
+			// Hand the resolved bucket to whatever runs next. The credential
+			// middleware needs its tenant and region, and this lookup already
+			// paid for the answer — repeating it there would mean a second round
+			// trip to the control endpoint on every object request.
+			c.Set(resolvedBucketKey, *b)
+
+			// Record what this ROUTE needs, not what the user could do. A listing
+			// asks for read even from someone who may write the bucket, so the
+			// credential it is signed with cannot write — the permission gate
+			// stops being the only thing between a bug and a mutation.
+			c.Set(requiredPermissionKey, permission)
+			return next(c)
 		}
 	}
+}
+
+// findBucket picks the bucket a request names out of the caller's list, or nil.
+//
+// Matched on the control-plane identifier or the gateway spelling only, never on
+// RealName. RealName is the BARE bucket name, which is unique within a tenant
+// and nothing more: a caller holding tenantA--exports and tenantB--exports who
+// asks for "exports" would resolve to whichever the endpoint listed first, and
+// the credential would be minted for the wrong owning account — a write refused
+// or, worse, performed against the other tenant's bucket, with no signal either
+// way.
+//
+// The identifier is not unique across regions either, so a request that names a
+// region (the "region" header) only matches a bucket listed in it. Without that
+// the first region listed won, and a bucket opened from one region was
+// authorized, rewritten and minted for its namesake in another. A request that
+// names no region takes the first match, which is the only one whenever the name
+// exists in one region.
+func findBucket(buckets []control.Bucket, name, region string) *control.Bucket {
+	region = strings.TrimSpace(region)
+	for i := range buckets {
+		b := &buckets[i]
+		if b.Name != name && b.S3Name != name {
+			continue
+		}
+		if region != "" && b.BucketRegion != "" && !strings.EqualFold(b.BucketRegion, region) {
+			continue
+		}
+		return b
+	}
+	return nil
 }
 
 // rewriteBucketParam replaces the request's bucket parameter in place.

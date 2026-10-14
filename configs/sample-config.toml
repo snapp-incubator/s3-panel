@@ -30,14 +30,18 @@ serve_frontend = true
 # access. Leave unset to hide the link.
 # iam_console_url = "https://iam.example.com"
 
-# The region this instance serves directly. Requests whose "region" header names
-# another region are reverse-proxied to that region's backend.
+# The region this instance serves directly. In s3 mode, requests whose "region"
+# header names another region are reverse-proxied to that region's backend. In
+# iam mode nothing is proxied: one instance serves buckets in every region, and
+# region_endpoints is unused.
 # region = "teh-1"
 # [server.region_endpoints]
 # teh-2 = "https://s3-panel.teh-2.example"
 
 [object_storage_config]
-# The gateway. Object operations always go here.
+# The gateway. Object operations go here — in iam mode, for buckets in this
+# instance's own region; a bucket in another region is reached through the
+# gateway the control endpoint names for it when minting its credential.
 url = "https://s3.example.com"
 access_key = ""
 secret_key = ""

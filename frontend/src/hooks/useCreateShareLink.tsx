@@ -9,12 +9,14 @@ import { useToast } from './use-toast'
 interface IUseCreateShareLinkProps {
   bucket: string
   object: string
+  region?: string
   closeHandler: () => void
 }
 
 export default function useCreateShareLink({
   bucket,
   object,
+  region,
   closeHandler
 }: IUseCreateShareLinkProps) {
   const [link, setLink] = useState<string | null>(null)
@@ -23,7 +25,7 @@ export default function useCreateShareLink({
   const [expirationTime, setExpirationTime] = useState<string | null>(null)
 
   const { mutate } = useMutation({
-    mutationFn: () => shareLink(bucket, object, expirationTime!),
+    mutationFn: () => shareLink(bucket, object, expirationTime!, region),
     onSuccess: data => {
       setLink(data.url)
       closeHandler()

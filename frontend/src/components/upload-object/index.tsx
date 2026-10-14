@@ -9,6 +9,7 @@ import type { TUploadObjectProps } from './uploadObject.types'
 
 export default function UploadObject({
   bucketName,
+  region,
   currentPath,
   refetchObjects
 }: TUploadObjectProps) {
@@ -16,6 +17,7 @@ export default function UploadObject({
 
   const { mutateAsync } = useFileUploadMutation({
     bucketName,
+    region,
     currentPath,
     refetchObjects
   })

@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { useParams } from '@tanstack/react-router'
+import { useParams, useSearch } from '@tanstack/react-router'
 import { useEffectOnce } from 'react-use'
 
 import { fetchIAMBucketDetail } from '@/api/panel'
 import { AlertMessage } from '@/components/alert-message'
 import PermissionBadges from '@/components/bucket-card/permission-badges'
+import RegionBadge from '@/components/bucket-card/region-badge'
 import ErrorState from '@/components/error-state'
 import { useTitle } from '@/components/providers/titleProvider'
 import { Card, CardContent, CardTitle } from '@/components/shadcn/card'
@@ -46,6 +47,10 @@ export default function BucketDetail() {
   const { bucketName } = useParams({
     from: '/object-storage/s3-bucket/buckets/$bucketName/detail'
   })
+  // Which of possibly several same-named buckets this is.
+  const { region } = useSearch({
+    from: '/object-storage/s3-bucket/buckets/$bucketName/detail'
+  })
 
   useEffectOnce(() => {
     setTitle(`SnappCloud - ${bucketName}`)
@@ -56,8 +61,8 @@ export default function BucketDetail() {
     isFetching,
     isError
   } = useQuery({
-    queryFn: () => fetchIAMBucketDetail(bucketName),
-    queryKey: ['bucket-detail', bucketName]
+    queryFn: () => fetchIAMBucketDetail(bucketName, region),
+    queryKey: ['bucket-detail', bucketName, region ?? '']
   })
 
   if (isError) {
@@ -83,7 +88,7 @@ export default function BucketDetail() {
       <div className="flex flex-col gap-2">
         <h2 className="text-3xl">{detail.display_name}</h2>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
-          {detail.region ? <span>{detail.region}</span> : null}
+          <RegionBadge region={detail.region} />
           {detail.tenant ? <span>{detail.tenant}</span> : null}
           {/* The gateway addresses a tenanted bucket differently from the panel,
               so anyone reaching for the CLI needs the gateway's spelling. */}

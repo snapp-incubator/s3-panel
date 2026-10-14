@@ -20,6 +20,7 @@ import type { TDeleteObjectProps } from './deleteObject.types'
 export default function DeleteObject({
   bucket,
   object,
+  region,
   refetchObjects
 }: TDeleteObjectProps) {
   const [open, setOpen] = useState(false)
@@ -27,7 +28,7 @@ export default function DeleteObject({
   const { toast } = useToast()
 
   const { mutate, isPending } = useMutation({
-    mutationFn: () => deleteObject(bucket, [object]),
+    mutationFn: () => deleteObject(bucket, [object], region),
     onSuccess: () => {
       setOpen(false)
       refetchObjects()

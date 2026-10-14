@@ -9,12 +9,14 @@ import { useToast } from './use-toast'
 
 interface IUseUploadMutationProps {
   bucketName: string
+  region?: string
   currentPath: string
   refetchObjects: () => void
 }
 
 export default function useFileUploadMutation({
   bucketName,
+  region,
   currentPath,
   refetchObjects
 }: IUseUploadMutationProps) {
@@ -34,9 +36,13 @@ export default function useFileUploadMutation({
 
       abortController.current = controller
 
-      return await uploadObjects(formData, progress => {
-        updateUploadNamesState(file.name, { progress })
-      })
+      return await uploadObjects(
+        formData,
+        progress => {
+          updateUploadNamesState(file.name, { progress })
+        },
+        region
+      )
     },
     onSuccess: () => {
       refetchObjects()

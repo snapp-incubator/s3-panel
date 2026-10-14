@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
-import { useDeferredValue, useEffect, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useNavigate, useSearch } from '@tanstack/react-router'
+import { useCallback, useEffect, useState } from 'react'
 import { useEffectOnce } from 'react-use'
 
 import { fetchIAMBuckets } from '@/api/panel'
@@ -15,21 +16,66 @@ import ErrorState from '@/components/error-state'
 import { useTitle } from '@/components/providers/titleProvider'
 import SearchField from '@/components/search-field'
 import { Button } from '@/components/shadcn/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/shadcn/select'
 import BucketCardSkeleton from '@/components/skeletons/BucketCardSkeleton'
 import UserQuota from '@/components/user-quota'
+import useLastBucketsSearch from '@/hooks/useLastBucketsSearch'
 import usePanelSession from '@/hooks/usePanelSession'
+import useUrlBackedInput from '@/hooks/useUrlBackedInput'
 import { t } from '@/i18n'
+
+const BUCKETS_ROUTE = '/object-storage/s3-bucket/buckets'
+
+// Radix Select reserves the empty string, so "no filter" needs a value of its own.
+const ALL_REGIONS = '__all__'
 
 export default function Buckets() {
   const { setTitle } = useTitle()
   const [openCreate, setOpenCreate] = useState(false)
-  const [page, setPage] = useState(1)
-  const [initialTotalPages, setInitialTotalPages] = useState<number | null>(
-    null
-  )
-  const [searchValue, setSearchValue] = useState('')
-  const deferredSearch = useDeferredValue(searchValue)
   const maxItems: number = 10
+
+  // Page, search and region filter are read from the URL, so Back from a bucket
+  // returns to the same page of the same list.
+  const listSearch = useSearch({ from: BUCKETS_ROUTE })
+  const { page = 1, search = '', region } = listSearch
+  const navigate = useNavigate({ from: BUCKETS_ROUTE })
+
+  const remember = useLastBucketsSearch(state => state.remember)
+  useEffect(() => remember(listSearch), [listSearch, remember])
+
+  const commitSearch = useCallback(
+    (value: string) =>
+      navigate({
+        search: prev => ({
+          ...prev,
+          search: value || undefined,
+          page: undefined
+        }),
+        replace: true
+      }),
+    [navigate]
+  )
+  const [searchText, setSearchText] = useUrlBackedInput(search, commitSearch)
+
+  const setPage = (value: number) =>
+    navigate({
+      search: prev => ({ ...prev, page: value > 1 ? value : undefined })
+    })
+
+  const setRegion = (value: string) =>
+    navigate({
+      search: prev => ({
+        ...prev,
+        region: value === ALL_REGIONS ? undefined : value,
+        page: undefined
+      })
+    })
 
   const isIAMMode = usePanelSession(state => state.authMode === 'iam')
   const isAdmin = usePanelSession(state => state.session?.is_admin === true)
@@ -46,9 +92,11 @@ export default function Buckets() {
     isError,
     refetch
   } = useQuery({
-    queryFn: () => fetchBucketsQuota(maxItems, page, deferredSearch),
-    queryKey: bucketsKeys.all(maxItems, page, deferredSearch),
-    enabled: !isIAMMode
+    queryFn: () => fetchBucketsQuota(maxItems, page, search),
+    queryKey: bucketsKeys.all(maxItems, page, search),
+    enabled: !isIAMMode,
+    // Keeps the page count steady while the next page loads.
+    placeholderData: keepPreviousData
   })
 
   const {
@@ -57,24 +105,24 @@ export default function Buckets() {
     isError: iamError,
     refetch: iamRefetch
   } = useQuery({
-    queryFn: () => fetchIAMBuckets(maxItems, page, deferredSearch),
-    queryKey: ['iam-buckets', maxItems, page, deferredSearch],
-    enabled: isIAMMode
+    queryFn: () => fetchIAMBuckets(maxItems, page, search, region),
+    queryKey: ['iam-buckets', maxItems, page, search, region ?? ''],
+    enabled: isIAMMode,
+    // Keeps the page count and the region choices steady while loading.
+    placeholderData: keepPreviousData
   })
 
   useEffectOnce(() => {
     setTitle('SnappCloud - s3 Buckets')
   })
 
-  useEffect(() => {
-    const totalPages = isIAMMode
-      ? iamBuckets?.total_pages
-      : buckets?.total_pages
+  const totalPages =
+    (isIAMMode ? iamBuckets?.total_pages : buckets?.total_pages) ?? 0
 
-    if (totalPages !== undefined && initialTotalPages === null) {
-      setInitialTotalPages(totalPages)
-    }
-  }, [buckets, iamBuckets, isIAMMode, initialTotalPages])
+  // Offered once there is more than one region to choose from, and kept while a
+  // filter is applied so it can be cleared.
+  const regions = iamBuckets?.regions ?? []
+  const showRegionFilter = isIAMMode && (regions.length > 1 || !!region)
 
   const returnBuckets = () => {
     if (isIAMMode) {
@@ -145,14 +193,32 @@ export default function Buckets() {
       ) : null}
 
       <span className="mt-2 block text-xl font-semibold">{t('buckets')}</span>
-      <div className="mt-4 flex items-center justify-between">
-        <SearchField
-          value={searchValue}
-          onChange={value => {
-            setSearchValue(value)
-            setPage(1)
-          }}
-        />
+      <div className="mt-4 flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <SearchField value={searchText} onChange={setSearchText} />
+          {showRegionFilter ? (
+            <Select value={region ?? ALL_REGIONS} onValueChange={setRegion}>
+              <SelectTrigger
+                className="w-[180px]"
+                aria-label={t('filter_by_region')}
+                data-test="region-filter"
+              >
+                <SelectValue placeholder={t('all_regions')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL_REGIONS}>{t('all_regions')}</SelectItem>
+                {(region && !regions.includes(region)
+                  ? [...regions, region]
+                  : regions
+                ).map(name => (
+                  <SelectItem value={name} key={name}>
+                    {name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+        </div>
         {/* A minted credential belongs to no tenant, so a bucket created with it
             would land outside the team's namespace. */}
         {isIAMMode || isReadOnly ? null : (
@@ -176,11 +242,11 @@ export default function Buckets() {
             )}
           </div>
           <div className="relative mt-5">
-            {initialTotalPages && initialTotalPages > 1 && !searchValue ? (
+            {totalPages > 1 ? (
               <CustomPagination
                 currentPage={page}
-                totalPages={initialTotalPages}
-                onPageChange={value => setPage(value)}
+                totalPages={totalPages}
+                onPageChange={setPage}
               />
             ) : null}
           </div>

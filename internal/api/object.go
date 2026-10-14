@@ -49,7 +49,7 @@ func (s *Server) HandleObjectDownload() echo.HandlerFunc {
 		}
 
 		// check if object exists before downloading
-		exists, errObjHead := s.store.ObjectHead(s.Config.ObjectStorage, req)
+		exists, errObjHead := s.store.ObjectHead(s.gatewayConfig(c), req)
 		if errObjHead.Message != nil {
 			s.logger.Error(errObjHead.Message.Error())
 			return c.JSON(errObjHead.Code, storage.OperationErrWithMsg{Message: errObjHead.Message.Error()})
@@ -58,7 +58,7 @@ func (s *Server) HandleObjectDownload() echo.HandlerFunc {
 			return c.JSON(http.StatusUnprocessableEntity, storage.OperationErrWithMsg{Message: "Object does not exist"})
 		}
 
-		url, errObjDownload := s.store.ObjectDownload(s.Config.ObjectStorage, req)
+		url, errObjDownload := s.store.ObjectDownload(s.gatewayConfig(c), req)
 		if errObjDownload.Message != nil {
 			s.logger.Error(errObjDownload.Message.Error())
 			return c.JSON(errObjDownload.Code, storage.OperationErrWithMsg{Message: errObjDownload.Message.Error()})
@@ -138,7 +138,7 @@ func (s *Server) HandleObjectUpload() echo.HandlerFunc {
 				Bucket:    req.Bucket,
 				Object:    req.Prefix + file.Filename,
 			}
-			existOut, existsErr := s.store.ObjectHead(s.Config.ObjectStorage, headReq)
+			existOut, existsErr := s.store.ObjectHead(s.gatewayConfig(c), headReq)
 			if existsErr.Message != nil {
 				s.logger.Error(existsErr.Message.Error())
 				return c.JSON(existsErr.Code, storage.OperationErrWithMsg{Message: existsErr.Message.Error()})
@@ -152,7 +152,7 @@ func (s *Server) HandleObjectUpload() echo.HandlerFunc {
 		}
 
 		for _, file := range files {
-			_, errObjectUpload := s.store.ObjectUpload(s.Config.ObjectStorage, req, file)
+			_, errObjectUpload := s.store.ObjectUpload(s.gatewayConfig(c), req, file)
 			if errObjectUpload.Message != nil {
 				s.logger.Error(errObjectUpload.Message.Error())
 				return c.JSON(errObjectUpload.Code, storage.OperationErrWithMsg{Message: errObjectUpload.Message.Error()})
@@ -174,8 +174,9 @@ func (s *Server) HandleObjectUpload() echo.HandlerFunc {
 //	@Param			secret_key		header		string								true	"User given SecretKey"
 //	@Param			bucket			query		string								true	"bucket name"
 //	@Param			max_keys		query		string								true	"max_keys of pagination"
-//	@Param			page			query		string								true	"page of pagination"
-//	@Param			search_string	query		string								true	"search by given string, could be empty"
+//	@Param			page			query		string								false	"page number; without continuation_token, page N is reached by skipping N-1 pages"
+//	@Param			continuation_token	query	string								false	"next_continuation_token from the previous page"
+//	@Param			search_string	query		string								false	"search by given string, could be empty"
 //	@Success		200				{object}	storage.ObjectListResponse	"Successful response with bucket list"
 //	@Failure		400				{object}	storage.OperationErrWithMsg	"Bad Request"
 //	@Failure		401				{object}	string								"Unauthorized"
@@ -218,12 +219,11 @@ func (s *Server) HandleObjectList() echo.HandlerFunc {
 		// account, so "buckets this account owns" is not "buckets this person may
 		// see".
 		if s.Config.Server.IsIAMMode() {
-			objects, errObjectList := s.store.ObjectList(s.Config.ObjectStorage, req)
+			objects, errObjectList := s.store.ObjectList(s.gatewayConfig(c), req)
 			if errObjectList.Message != nil {
 				s.logger.Error(errObjectList.Message.Error())
 				return c.JSON(errObjectList.Code, storage.OperationErrWithMsg{Message: errObjectList.Message.Error()})
 			}
-			objects.TotalPages = totalPages(objects.TotalMatchedItems, int(req.MaxKeys))
 			return c.JSON(http.StatusOK, objects)
 		}
 
@@ -253,7 +253,7 @@ func (s *Server) HandleObjectList() echo.HandlerFunc {
 			return c.JSON(errBucketQuota.Code, storage.OperationErrWithMsg{Message: errBucketQuota.Message.Error()})
 		}
 
-		objects, errObjectList := s.store.ObjectList(s.Config.ObjectStorage, req)
+		objects, errObjectList := s.store.ObjectList(s.gatewayConfig(c), req)
 		if errObjectList.Message != nil {
 			s.logger.Error(errObjectList.Message.Error())
 			return c.JSON(errObjectList.Code, storage.OperationErrWithMsg{Message: errObjectList.Message.Error()})
@@ -262,12 +262,8 @@ func (s *Server) HandleObjectList() echo.HandlerFunc {
 		var bucketFound = false
 		for _, bucketData := range outputBucketQuota.Items {
 			if bucketData.BucketName == req.Bucket {
-				if objects.TotalMatchedItems%int(req.MaxKeys) == 0 {
-					objects.TotalPages = objects.TotalMatchedItems / int(req.MaxKeys)
-				} else {
-					objects.TotalPages = (objects.TotalMatchedItems / int(req.MaxKeys)) + 1
-				}
 				bucketFound = true
+				break
 			}
 		}
 
@@ -325,7 +321,7 @@ func (s *Server) HandleObjectsDelete() echo.HandlerFunc {
 				Bucket:    req.Bucket,
 				Object:    obj,
 			}
-			existOut, existsErr := s.store.ObjectHead(s.Config.ObjectStorage, headReq)
+			existOut, existsErr := s.store.ObjectHead(s.gatewayConfig(c), headReq)
 			if existsErr.Message != nil {
 				s.logger.Error(existsErr.Message.Error())
 				return c.JSON(existsErr.Code, storage.OperationErrWithMsg{Message: existsErr.Message.Error()})
@@ -334,7 +330,7 @@ func (s *Server) HandleObjectsDelete() echo.HandlerFunc {
 			}
 		}
 
-		objects, errObjectDelete := s.store.ObjectsDelete(s.Config.ObjectStorage, req)
+		objects, errObjectDelete := s.store.ObjectsDelete(s.gatewayConfig(c), req)
 		if errObjectDelete.Message != nil {
 			s.logger.Error(errObjectDelete.Message.Error())
 			return c.JSON(errObjectDelete.Code, storage.OperationErrWithMsg{Message: errObjectDelete.Message.Error()})
@@ -380,7 +376,7 @@ func (s *Server) HandleObjectHead() echo.HandlerFunc {
 			return c.JSON(http.StatusBadRequest, storage.OperationErrWithMsg{Message: err.Error()})
 		}
 
-		objects, errObjectHead := s.store.ObjectHead(s.Config.ObjectStorage, req)
+		objects, errObjectHead := s.store.ObjectHead(s.gatewayConfig(c), req)
 		if errObjectHead.Message != nil {
 			s.logger.Error(errObjectHead.Message.Error())
 			return c.JSON(errObjectHead.Code, storage.OperationErrWithMsg{Message: errObjectHead.Message.Error()})
@@ -427,7 +423,7 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 			return c.JSON(http.StatusBadRequest, storage.OperationErrWithMsg{Message: err.Error()})
 		}
 
-		exists, errObjHead := s.store.ObjectHead(s.Config.ObjectStorage, req)
+		exists, errObjHead := s.store.ObjectHead(s.gatewayConfig(c), req)
 		if errObjHead.Message != nil {
 			s.logger.Error(errObjHead.Message.Error())
 			return c.JSON(errObjHead.Code, storage.OperationErrWithMsg{Message: errObjHead.Message.Error()})
@@ -444,7 +440,7 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 				Message: "the storage credential for this request is about to expire; retry the share"})
 		}
 
-		url, errObjShare := s.store.ObjectShare(s.Config.ObjectStorage, req)
+		url, errObjShare := s.store.ObjectShare(s.gatewayConfig(c), req)
 		if errObjShare.Message != nil {
 			s.logger.Error(errObjShare.Message.Error())
 			return c.JSON(errObjShare.Code, storage.OperationErrWithMsg{Message: errObjShare.Message.Error()})

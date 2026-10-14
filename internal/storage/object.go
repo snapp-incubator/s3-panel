@@ -9,10 +9,16 @@ type ObjectListRequestMeta struct {
 	// long-lived keys a user types in s3 mode, so it is never required.
 	SessionToken string `header:"session_token"`
 	Bucket       string `query:"bucket"        validate:"required"`
-	Page         int32  `query:"page"          validate:"required"`
+	// Page is the page number the caller is on. With a ContinuationToken it is
+	// informational; without one, page N is reached by skipping N-1 pages, one
+	// gateway call each.
+	Page         int32  `query:"page"`
 	MaxKeys      int32  `query:"max_keys"      validate:"required"`
 	SearchString string `query:"search_string"`
 	Prefix       string `query:"prefix"`
+	// ContinuationToken is the NextContinuationToken of the previous page, and
+	// resumes the listing exactly where that page ended.
+	ContinuationToken string `query:"continuation_token"`
 }
 
 type ObjectDeleteRequestMeta struct {
@@ -60,10 +66,22 @@ type ObjectListBody struct {
 	IsFolder              bool    `json:"is_folder"`
 }
 
+// ObjectListResponse is one page of a listing.
+//
+// A listing is paged with continuation tokens, not counted: knowing how many
+// pages there are means walking the whole bucket, which is what made a bucket
+// with millions of objects never answer at all. So TotalPages is the pages
+// known to exist — this one, plus one when IsTruncated — and TotalMatchedItems
+// counts the items on this page.
 type ObjectListResponse struct {
 	Items             []ObjectListBody `json:"items"`
 	TotalMatchedItems int              `json:"total_matched_items"`
 	TotalPages        int              `json:"total_pages"`
+	// IsTruncated reports that the listing continues past this page.
+	IsTruncated bool `json:"is_truncated"`
+	// NextContinuationToken resumes the listing after this page. Empty on the
+	// last page.
+	NextContinuationToken string `json:"next_continuation_token,omitempty"`
 }
 
 type ObjectDownloadResponse struct {

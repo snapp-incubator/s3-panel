@@ -18,6 +18,8 @@ export interface IShareObjectProps {
   open: boolean
   bucket: string
   object: string
+  /** The bucket's region; undefined keeps the signed-in region (s3 mode). */
+  region?: string
   closeHandler: () => void
 }
 
@@ -25,7 +27,8 @@ export default function ShareObject({
   open,
   closeHandler,
   bucket,
-  object
+  object,
+  region
 }: IShareObjectProps) {
   const {
     link,
@@ -37,6 +40,7 @@ export default function ShareObject({
   } = useCreateShareLink({
     bucket,
     object,
+    region,
     closeHandler
   })
 

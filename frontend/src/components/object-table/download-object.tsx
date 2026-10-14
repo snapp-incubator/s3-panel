@@ -8,7 +8,6 @@ import {
 } from '@/components/shadcn/tooltip'
 import useDownloadObject from '@/hooks/useDownloadObject'
 import { t } from '@/i18n'
-import { buildQueryString } from '@/services/http/query-client'
 
 import { Button } from '../shadcn/button'
 
@@ -16,14 +15,10 @@ import type { TDownloadObjectProps } from './downloadObject.types'
 
 export default function DownloadObject({
   bucket,
-  object
+  object,
+  region
 }: TDownloadObjectProps) {
-  const downloadLink = `/s3/api/object/download?${buildQueryString({
-    bucket,
-    object
-  })}`
-
-  const { mutate: downloadObject } = useDownloadObject(downloadLink)
+  const { mutate: downloadObject } = useDownloadObject(bucket, object, region)
 
   return (
     <TooltipProvider delayDuration={50}>

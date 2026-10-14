@@ -35,9 +35,19 @@ func (s *Server) buildRegionTargets() error {
 // regionRouter reverse-proxies an API request to the backend of the region
 // named in the "region" header. Requests for the local region (or with no
 // region header) are handled in-process by the next handler.
+//
+// In iam mode nothing is proxied: the control endpoint answers for every
+// region, and the credential minted for a bucket names the gateway of the
+// region it lives in, so this instance serves all of them. The header then only
+// says which region a bucket name refers to, which requireBucketPermission
+// reads.
 func (s *Server) regionRouter() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
+			if s.Config.Server.IsIAMMode() {
+				return next(c)
+			}
+
 			region := c.Request().Header.Get("region")
 			if region == "" || region == s.Config.Server.Region {
 				return next(c)

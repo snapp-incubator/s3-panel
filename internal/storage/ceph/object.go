@@ -82,6 +82,19 @@ func (c CephObjectStorage) ObjectDownload(serverAdminConfig config.ObjectStorage
 	return storage.ObjectDownloadResponse{URL: urlPreSign.URL}, storage.HTTPErrorWithCode{}
 }
 
+// Bounds on what one listing request may cost the gateway.
+const (
+	// maxListPageSize is the most entries ListObjectsV2 returns in one call.
+	maxListPageSize = 1000
+	// maxPagesSkipped caps how far a caller paging by number, without a
+	// continuation token, may jump: each page skipped is one gateway call.
+	maxPagesSkipped = 100
+	// searchScanPage is how many keys a search asks the gateway for at a time,
+	// and searchScanBudget how many it may examine in one request.
+	searchScanPage   = 1000
+	searchScanBudget = 5000
+)
+
 func (c CephObjectStorage) ObjectList(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectListRequestMeta) (storage.ObjectListResponse, storage.HTTPErrorWithCode) {
 	client, err := c.NewClient(serverAdminConfig.URL, meta.AccessKey, meta.SecretKey, meta.SessionToken)
 	if err != nil {
@@ -91,34 +104,54 @@ func (c CephObjectStorage) ObjectList(serverAdminConfig config.ObjectStorageConf
 	if meta.MaxKeys <= 0 {
 		meta.MaxKeys = 10
 	}
+	if meta.MaxKeys > maxListPageSize {
+		meta.MaxKeys = maxListPageSize
+	}
 	if meta.Page <= 0 {
 		meta.Page = 1
 	}
 
-	if meta.SearchString != "" {
+	if strings.TrimSpace(meta.SearchString) != "" {
 		return c.objectListSearch(client, meta)
 	}
 	return c.objectListByPrefix(client, meta)
 }
 
+// objectListByPrefix returns one page of a folder — its subfolders and files —
+// from a single ListObjectsV2 call.
+//
+// It used to list the whole folder on every request, 500 keys at a time, only
+// to count the entries and slice one page out of them. A folder holding millions
+// of objects meant thousands of gateway calls per click, and the page never
+// rendered. Resuming from the gateway's continuation token makes a page cost one
+// call, whatever the bucket holds.
 func (c CephObjectStorage) objectListByPrefix(client *s3.Client, meta storage.ObjectListRequestMeta) (storage.ObjectListResponse, storage.HTTPErrorWithCode) {
-	var bulkListKeys int32 = 500
-	var allFolders []storage.ObjectListBody
-	var allFiles []storage.ObjectListBody
-	var nextContinuationToken *string
+	token := meta.ContinuationToken
 
-	downThreshold := int(meta.MaxKeys) * (int(meta.Page) - 1)
-	upThreshold := int(meta.MaxKeys) * int(meta.Page)
+	// A caller paging by number, with no token, is walked to its page one call
+	// per page skipped — bounded by the page number, not by the bucket's size.
+	skip := 0
+	if token == "" {
+		skip = int(meta.Page) - 1
+	}
+	if skip > maxPagesSkipped {
+		return storage.ObjectListResponse{}, storage.HTTPErrorWithCode{
+			Code:    http.StatusBadRequest,
+			Message: fmt.Errorf("page %d is too deep to reach by number; follow next_continuation_token instead", meta.Page),
+		}
+	}
 
 	for {
 		input := &s3.ListObjectsV2Input{
-			Bucket:            aws.String(meta.Bucket),
-			MaxKeys:           aws.Int32(bulkListKeys),
-			Delimiter:         aws.String("/"),
-			ContinuationToken: nextContinuationToken,
+			Bucket:    aws.String(meta.Bucket),
+			MaxKeys:   aws.Int32(meta.MaxKeys),
+			Delimiter: aws.String("/"),
 		}
 		if meta.Prefix != "" {
 			input.Prefix = aws.String(meta.Prefix)
+		}
+		if token != "" {
+			input.ContinuationToken = aws.String(token)
 		}
 
 		output, errList := client.ListObjectsV2(context.Background(), input)
@@ -126,114 +159,130 @@ func (c CephObjectStorage) objectListByPrefix(client *s3.Client, meta storage.Ob
 			return storage.ObjectListResponse{}, translateError(errList)
 		}
 
-		for _, cp := range output.CommonPrefixes {
-			name := *cp.Prefix
-			if meta.Prefix != "" && strings.HasPrefix(name, meta.Prefix) {
-				name = strings.TrimPrefix(name, meta.Prefix)
+		truncated := aws.ToBool(output.IsTruncated)
+		next := aws.ToString(output.NextContinuationToken)
+
+		if skip > 0 {
+			if !truncated || next == "" {
+				// The listing ends before the page asked for.
+				return storage.ObjectListResponse{
+					Items:      []storage.ObjectListBody{},
+					TotalPages: int(meta.Page) - skip,
+				}, storage.HTTPErrorWithCode{}
 			}
-			allFolders = append(allFolders, storage.ObjectListBody{
-				Name:     &name,
-				IsFolder: true,
-			})
+			skip--
+			token = next
+			continue
 		}
 
+		items := make([]storage.ObjectListBody, 0, len(output.CommonPrefixes)+len(output.Contents))
+		for _, cp := range output.CommonPrefixes {
+			name := strings.TrimPrefix(aws.ToString(cp.Prefix), meta.Prefix)
+			items = append(items, storage.ObjectListBody{Name: &name, IsFolder: true})
+		}
 		for _, obj := range output.Contents {
-			key := *obj.Key
-			if meta.Prefix != "" && strings.HasPrefix(key, meta.Prefix) {
-				key = strings.TrimPrefix(key, meta.Prefix)
-			}
-			if key == "" {
+			name := strings.TrimPrefix(aws.ToString(obj.Key), meta.Prefix)
+			// The folder's own placeholder object, not a file inside it.
+			if name == "" {
 				continue
 			}
-			objSizeValue, objSizeUnit := convertSizeToUnit(obj.Size)
-			allFiles = append(allFiles, storage.ObjectListBody{
-				Name:                  &key,
-				SizeValue:             objSizeValue,
-				SizeUnit:              objSizeUnit,
-				LastModifiedTimestamp: obj.LastModified.String(),
-				IsFolder:              false,
-			})
+			items = append(items, fileEntry(name, obj))
 		}
 
-		if output.IsTruncated != nil && *output.IsTruncated {
-			nextContinuationToken = output.NextContinuationToken
-		} else {
-			break
-		}
+		return pageResponse(meta, items, truncated, next), storage.HTTPErrorWithCode{}
 	}
-
-	allItems := append(allFolders, allFiles...)
-	totalItems := len(allItems)
-
-	if downThreshold >= totalItems {
-		return storage.ObjectListResponse{
-			Items:             []storage.ObjectListBody{},
-			TotalMatchedItems: totalItems,
-			TotalPages:        (totalItems + int(meta.MaxKeys) - 1) / int(meta.MaxKeys),
-		}, storage.HTTPErrorWithCode{Code: 0, Message: nil}
-	}
-
-	end := upThreshold
-	if end > totalItems {
-		end = totalItems
-	}
-
-	return storage.ObjectListResponse{
-		Items:             allItems[downThreshold:end],
-		TotalMatchedItems: totalItems,
-		TotalPages:        (totalItems + int(meta.MaxKeys) - 1) / int(meta.MaxKeys),
-	}, storage.HTTPErrorWithCode{Code: 0, Message: nil}
 }
 
+// objectListSearch finds the keys under the current folder whose name below it
+// contains the search string.
+//
+// S3 has no substring search, so this has to look at keys — and it used to look
+// at every key in the bucket on every request, which on a large bucket never
+// finished. Now one request examines at most searchScanBudget keys: it stops
+// when the page is full or the budget is spent and hands back the last key it
+// examined to resume from. A page can therefore come back short, or empty, with
+// more of the bucket still to search.
 func (c CephObjectStorage) objectListSearch(client *s3.Client, meta storage.ObjectListRequestMeta) (storage.ObjectListResponse, storage.HTTPErrorWithCode) {
-	var bulkListKeys int32 = 500
-	var desiredObjects []storage.ObjectListBody
-	var totalMatchedItems = 0
-	var nextContinuationToken *string
-	downThreshold := int(meta.MaxKeys) * (int(meta.Page) - 1)
-	upThreshold := int(meta.MaxKeys) * int(meta.Page)
-	meta.SearchString = strings.TrimSpace(strings.ToLower(meta.SearchString))
+	needle := strings.ToLower(strings.TrimSpace(meta.SearchString))
+
+	// The token is the last key the previous page examined, resumed with
+	// StartAfter rather than the gateway's continuation token: a search can stop
+	// part-way through a gateway page once its own page is full, and a
+	// continuation token could only resume after the whole of it.
+	after := meta.ContinuationToken
+	items := make([]storage.ObjectListBody, 0, meta.MaxKeys)
+	scanned := 0
 
 	for {
 		input := &s3.ListObjectsV2Input{
-			Bucket:            aws.String(meta.Bucket),
-			MaxKeys:           aws.Int32(bulkListKeys),
-			ContinuationToken: nextContinuationToken,
+			Bucket:  aws.String(meta.Bucket),
+			MaxKeys: aws.Int32(int32(min(searchScanPage, searchScanBudget-scanned))),
+		}
+		if meta.Prefix != "" {
+			input.Prefix = aws.String(meta.Prefix)
+		}
+		if after != "" {
+			input.StartAfter = aws.String(after)
 		}
 
-		outputListObjects, errListObjects := client.ListObjectsV2(context.Background(), input)
-		if errListObjects != nil {
-			return storage.ObjectListResponse{}, translateError(errListObjects)
+		output, errList := client.ListObjectsV2(context.Background(), input)
+		if errList != nil {
+			return storage.ObjectListResponse{}, translateError(errList)
 		}
+		truncated := aws.ToBool(output.IsTruncated)
 
-		for _, object := range outputListObjects.Contents {
-			if !strings.Contains(strings.ToLower(*object.Key), meta.SearchString) {
-				continue
+		for i, obj := range output.Contents {
+			key := aws.ToString(obj.Key)
+			after = key
+			scanned++
+
+			if strings.Contains(strings.ToLower(strings.TrimPrefix(key, meta.Prefix)), needle) {
+				items = append(items, fileEntry(key, obj))
 			}
-			totalMatchedItems += 1
-			if downThreshold < totalMatchedItems && totalMatchedItems <= upThreshold {
-				objSizeValue, objSizeUnit := convertSizeToUnit(object.Size)
-				desiredObjects = append(desiredObjects, storage.ObjectListBody{
-					Name:                  object.Key,
-					LastModifiedTimestamp: object.LastModified.String(),
-					SizeUnit:              objSizeUnit,
-					SizeValue:             objSizeValue,
-					IsFolder:              false,
-				})
+			if len(items) == int(meta.MaxKeys) {
+				more := i < len(output.Contents)-1 || truncated
+				return pageResponse(meta, items, more, after), storage.HTTPErrorWithCode{}
 			}
 		}
 
-		if outputListObjects.IsTruncated != nil && *outputListObjects.IsTruncated {
-			nextContinuationToken = outputListObjects.NextContinuationToken
-		} else {
-			break
+		if !truncated || len(output.Contents) == 0 {
+			return pageResponse(meta, items, false, ""), storage.HTTPErrorWithCode{}
+		}
+		if scanned >= searchScanBudget {
+			return pageResponse(meta, items, true, after), storage.HTTPErrorWithCode{}
 		}
 	}
+}
+
+// fileEntry is one object as the listing reports it, under the given name.
+func fileEntry(name string, obj types.Object) storage.ObjectListBody {
+	sizeValue, sizeUnit := convertSizeToUnit(obj.Size)
+	return storage.ObjectListBody{
+		Name:                  &name,
+		SizeValue:             sizeValue,
+		SizeUnit:              sizeUnit,
+		LastModifiedTimestamp: obj.LastModified.String(),
+		IsFolder:              false,
+	}
+}
+
+// pageResponse assembles one page. A listing is only reported as continuing
+// when there is a token to continue it with.
+func pageResponse(meta storage.ObjectListRequestMeta, items []storage.ObjectListBody, more bool, next string) storage.ObjectListResponse {
+	more = more && next != ""
+	pages := int(meta.Page)
+	if more {
+		pages++
+	} else {
+		next = ""
+	}
 	return storage.ObjectListResponse{
-		Items:             desiredObjects,
-		TotalMatchedItems: totalMatchedItems,
-		TotalPages:        (totalMatchedItems + int(meta.MaxKeys) - 1) / int(meta.MaxKeys),
-	}, storage.HTTPErrorWithCode{Code: 0, Message: nil}
+		Items:                 items,
+		TotalMatchedItems:     len(items),
+		TotalPages:            pages,
+		IsTruncated:           more,
+		NextContinuationToken: next,
+	}
 }
 
 func (c CephObjectStorage) ObjectUpload(serverAdminConfig config.ObjectStorageConfig, meta storage.ObjectUploadRequestMeta, file *multipart.FileHeader) (storage.ObjectUploadResponse, storage.HTTPErrorWithCode) {

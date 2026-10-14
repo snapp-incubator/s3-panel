@@ -3,6 +3,11 @@ import { lazy } from 'react'
 import { basePath } from '@/lib/basePath'
 import { handleAuthRedirect } from '@/lib/utils'
 import { rootRoute } from './root'
+import {
+  parseBucketDetailSearch,
+  parseBucketObjectsSearch,
+  parseBucketsSearch
+} from './search'
 
 const S3BucketPage = lazy(() => import('@/pages/objectStorage/s3Bucket'))
 const BucketsPage = lazy(() => import('@/pages/objectStorage/s3Bucket/buckets'))
@@ -33,6 +38,7 @@ export const BucketsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/object-storage/s3-bucket/buckets',
   component: BucketsPage,
+  validateSearch: parseBucketsSearch,
   beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
 })
 
@@ -40,6 +46,7 @@ export const BucketObjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/object-storage/s3-bucket/buckets/$bucketName',
   component: BucketObjectsPage,
+  validateSearch: parseBucketObjectsSearch,
   beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
 })
 
@@ -49,6 +56,7 @@ export const BucketDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/object-storage/s3-bucket/buckets/$bucketName/detail',
   component: BucketDetailPage,
+  validateSearch: parseBucketDetailSearch,
   beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
 })
 

@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import { Database, Globe, UserCog } from 'lucide-react'
+import { Database, UserCog } from 'lucide-react'
 
 import { Button } from '@/components/shadcn/button'
 import usePanelSession from '@/hooks/usePanelSession'
@@ -7,6 +7,7 @@ import { t } from '@/i18n'
 import type { IIAMBucket } from '@/types/s3/panel.types'
 
 import PermissionBadges from './permission-badges'
+import RegionBadge from './region-badge'
 
 /**
  * A bucket card for `iam` mode.
@@ -28,16 +29,20 @@ const IAMBucketCard = (bucket: IIAMBucket) => {
       ? `${iamConsoleUrl}/resources/${encodeURIComponent(bucket.resource_id)}`
       : null
 
+  // The region travels with the bucket: the same name can exist in two regions,
+  // and every call made for this bucket has to say which one it means.
   const openObjects = () =>
     navigate({
       to: '/object-storage/s3-bucket/buckets/$bucketName',
-      params: { bucketName: bucket.bucket }
+      params: { bucketName: bucket.bucket },
+      search: { region: bucket.region || undefined }
     })
 
   const openDetail = () =>
     navigate({
       to: '/object-storage/s3-bucket/buckets/$bucketName/detail',
-      params: { bucketName: bucket.bucket }
+      params: { bucketName: bucket.bucket },
+      search: { region: bucket.region || undefined }
     })
 
   return (
@@ -56,13 +61,8 @@ const IAMBucketCard = (bucket: IIAMBucket) => {
             {bucket.display_name}
           </p>
 
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {bucket.region ? (
-              <span className="flex items-center gap-1">
-                <Globe className="size-3" />
-                {bucket.region}
-              </span>
-            ) : null}
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <RegionBadge region={bucket.region} />
             {bucket.tenant ? (
               <span className="truncate" title={bucket.tenant}>
                 {bucket.tenant}

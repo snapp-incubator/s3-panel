@@ -16,14 +16,17 @@ export const bucketObjectKeys = createKeyStore(s3Keys.objects, {
     bucketName: string,
     page: number,
     searchValue?: string,
-    prefix?: string
-  ) => [bucketName, page, searchValue, prefix]
+    prefix?: string,
+    token?: string,
+    region?: string
+  ) => [bucketName, page, searchValue, prefix, token, region]
 })
 
 export const bucketsKeys = createKeyStore(s3Keys.buckets, {
-  all: (maxItems: number = 10, page: number = 1, searchValue?: string) => [
-    maxItems,
-    page,
-    searchValue
-  ]
+  all: (
+    maxItems: number = 10,
+    page: number = 1,
+    searchValue?: string,
+    region?: string
+  ) => [maxItems, page, searchValue, region]
 })
