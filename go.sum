@@ -36,8 +36,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.51.4 h1:OKEfbf2tcfsF2pBk/S9QqNpo6ala
 github.com/aws/aws-sdk-go-v2/service/sts v1.51.4/go.mod h1:mCd6qGo9b8hTtfjgsmNkFlzwjyce4owd7HDVFnCLXhM=
 github.com/aws/smithy-go v1.28.5 h1:OqbqKtzY9NUnr2yAe9+hiTdFb20tNaK/lI0PMOGXX9k=
 github.com/aws/smithy-go v1.28.5/go.mod h1:YE2RhdIuDbA5E5bTdciG9KrW3+TiEONeUWCqxX9i1Fc=
-github.com/ceph/go-ceph v0.41.0 h1:uATh5+zR1KWOQCoBYj4uEfuAPsSccajOGXWW8u8UTgA=
-github.com/ceph/go-ceph v0.41.0/go.mod h1:8tvljRxQ65aEtRt7aCxzuPpN7tiwPHCPPSuAqQ5teCY=
+github.com/ceph/go-ceph v0.42.1 h1:qiMqi2KG2DjwfSU0tm5oLlKNRvl1LACK1tNiYfzX+ps=
+github.com/ceph/go-ceph v0.42.1/go.mod h1:xe6n9CPg/RXsSMgvKV/GYrY1US0y0hRWPKusU5VON/4=
 github.com/coreos/go-oidc/v3 v3.21.0 h1:wZo4Q9Pum8dYEj0eMUPrqR+kvuGkeUplbLpNCkBqoWM=
 github.com/coreos/go-oidc/v3 v3.21.0/go.mod h1:DYCf24+ncYi+XkIH97GY1+dqoRlbaSI26KVTCI9SrY4=
 github.com/fatih/structs v1.1.0 h1:Q7juDM0QtcnhCpeyLGQKyg4TOIghuNXrkL32pHAUMxo=
@@ -93,8 +93,8 @@ github.com/knadh/koanf/providers/file v1.2.1 h1:bEWbtQwYrA+W2DtdBrQWyXqJaJSG3KrP
 github.com/knadh/koanf/providers/file v1.2.1/go.mod h1:bp1PM5f83Q+TOUu10J/0ApLBd9uIzg+n9UgthfY+nRA=
 github.com/knadh/koanf/providers/structs v1.0.1 h1:2HIjxQ6n6x9cuMYSKXusWoIwmwvGXWqLGR1URXNnczs=
 github.com/knadh/koanf/providers/structs v1.0.1/go.mod h1:kjo5TFtgpaZORlpoJqcbeLowM2cINodv8kX+oFAeQ1w=
-github.com/knadh/koanf/v2 v2.3.8 h1:NftEOf0Y456FqpLJj31RYYZQnfBQ+DDhsNQPqJ6nuk4=
-github.com/knadh/koanf/v2 v2.3.8/go.mod h1:gRb40VRAbd4iJMYYD5IxZ6hfuopFcXBpc9bbQpZwo28=
+github.com/knadh/koanf/v2 v2.4.0 h1:wmp0NlAUIasxphpHIU6Su5sKQn3Up/AvI2ZA2GeJTUk=
+github.com/knadh/koanf/v2 v2.4.0/go.mod h1:gRb40VRAbd4iJMYYD5IxZ6hfuopFcXBpc9bbQpZwo28=
 github.com/kr/pretty v0.2.1 h1:Fmg33tUaq4/8ym9TJN1x7sLJnHVwhP33CNkpYV/7rwI=
 github.com/kr/pretty v0.2.1/go.mod h1:ipq/a2n7PKx3OHsz4KJII5eveXtPO4qwEXGdVfWzfnI=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=

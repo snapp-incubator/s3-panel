@@ -7,14 +7,14 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.9
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.3
 	github.com/aws/smithy-go v1.28.5
-	github.com/ceph/go-ceph v0.41.0
+	github.com/ceph/go-ceph v0.42.1
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-playground/validator v9.31.0+incompatible
 	github.com/knadh/koanf/parsers/toml v0.1.0
 	github.com/knadh/koanf/providers/env v1.1.0
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/providers/structs v1.0.1
-	github.com/knadh/koanf/v2 v2.3.8
+	github.com/knadh/koanf/v2 v2.4.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/stretchr/testify v1.12.1
 	github.com/swaggo/echo-swagger v1.5.2
