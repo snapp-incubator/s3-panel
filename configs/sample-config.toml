@@ -33,6 +33,16 @@ serve_frontend = true
 # presents the backend's own origin.
 # trusted_origins = ["https://console.example.com"]
 
+# Serve the whole panel (SPA, API, sign-in, health) under a path prefix of its
+# host, e.g. when several apps share one host. Requests must reach the panel
+# with the prefix still on (a proxy in front must not strip it), the frontend
+# must be built with the same VITE_BASE_PATH, and oidc.redirect_url must point
+# at <host><base_path>/auth/callback. The session cookie is scoped to it
+# (Path=<base_path>), and a Path=/ session cookie from a root-mounted panel is
+# expired at the next sign-in or sign-out. /health also stays at the root.
+# Empty serves the panel at the host's root.
+# base_path = "/storage"
+
 # auth_mode = "iam" only: the browser-facing address of the IAM console. When
 # set, each bucket card links to that bucket's page there, to manage who has
 # access. Leave unset to hide the link.
@@ -80,6 +90,7 @@ secret_key = ""
 #
 # Base64 of 32 random bytes: openssl rand -base64 32
 # cookie_key = ""
+# The session cookie's name. Give each app sharing a host its own.
 # cookie_name = "s3panel_session"
 # cookie_secure = true            # set false only for plain-HTTP local dev
 #
@@ -90,4 +101,6 @@ secret_key = ""
 # decides what they may actually see; this only reveals the UI.
 # admin_groups = ["Cloud"]
 #
+# Where a sign-in lands. A root-relative value is relative to base_path ("/"
+# lands on the panel's own home).
 # post_login_redirect = "/"

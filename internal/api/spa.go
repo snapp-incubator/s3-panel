@@ -21,16 +21,17 @@ const cspNoncePlaceholder = "__CSP_NONCE__"
 // handlers registered on the router.
 var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/docs"}
 
-// frontendMiddleware serves the embedded frontend SPA for any GET or HEAD that
-// is not an API, auth, health or docs route. A path naming a built file is
-// served as that file; anything else falls back to index.html, so client-side
-// routes (e.g. /object-storage/...) resolve to the app.
-func frontendMiddleware() echo.MiddlewareFunc {
-	return spaMiddleware(web.FS())
+// frontendMiddleware serves the embedded frontend SPA for any GET or HEAD under
+// the base path that is not an API, auth, health or docs route. A path naming a
+// built file is served as that file; anything else falls back to index.html, so
+// client-side routes (e.g. /object-storage/...) resolve to the app. Paths
+// outside the base path are not the panel's and fall through.
+func frontendMiddleware(base string) echo.MiddlewareFunc {
+	return spaMiddleware(web.FS(), base)
 }
 
 // spaMiddleware is frontendMiddleware over any build, so tests can hand it one.
-func spaMiddleware(files fs.FS) echo.MiddlewareFunc {
+func spaMiddleware(files fs.FS, base string) echo.MiddlewareFunc {
 	index, err := fs.ReadFile(files, "index.html")
 	if err != nil {
 		// internal/web/dist always carries at least a placeholder index.html.
@@ -43,7 +44,10 @@ func spaMiddleware(files fs.FS) echo.MiddlewareFunc {
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
 				return next(c)
 			}
-			p := req.URL.Path
+			p, ok := underBase(req.URL.Path, base)
+			if !ok {
+				return next(c)
+			}
 			for _, prefix := range backendPrefixes {
 				if p == prefix || strings.HasPrefix(p, prefix+"/") {
 					return next(c)
@@ -71,4 +75,19 @@ func serveIndex(c echo.Context, index []byte) error {
 	body := bytes.ReplaceAll(index, []byte(cspNoncePlaceholder), []byte(cspNonce(c)))
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.HTMLBlob(http.StatusOK, body)
+}
+
+// underBase returns p relative to base ("/" for base itself), or false when p
+// is not under base. With no base every path is the panel's.
+func underBase(p, base string) (string, bool) {
+	if base == "" {
+		return p, true
+	}
+	if p == base {
+		return "/", true
+	}
+	if rest, ok := strings.CutPrefix(p, base+"/"); ok {
+		return "/" + rest, true
+	}
+	return "", false
 }

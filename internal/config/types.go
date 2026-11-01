@@ -1,6 +1,10 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Authentication modes.
 const (
@@ -65,11 +69,50 @@ type ServerConfig struct {
 	// request with no Origin header (a script, not a browser). Leave empty unless
 	// the SPA is served from somewhere else, e.g. the Vite dev server.
 	TrustedOrigins []string `json:"trusted_origins" koanf:"trusted_origins"`
+	// BasePath serves the whole panel — SPA, API, sign-in and health — under a
+	// path prefix of its host, e.g. "/storage" when several apps share one
+	// host. The session cookie is scoped to it, and the sign-in round trip
+	// stays under it. Requests reach the panel WITH the prefix: a proxy in front
+	// must not strip it. The frontend must be built with the same
+	// VITE_BASE_PATH. Empty (the default) serves the panel at the host's root.
+	BasePath string `json:"base_path" koanf:"base_path"`
 }
 
 // IsIAMMode reports whether the panel authenticates users with OIDC rather than
 // S3 credentials.
 func (s ServerConfig) IsIAMMode() bool { return s.AuthMode == AuthModeIAM }
+
+// Base returns BasePath normalised to "" (the host's root) or "/a/b": one
+// leading slash, no trailing one. Validate BasePath with ValidateBasePath first.
+func (s ServerConfig) Base() string {
+	return strings.TrimRight("/"+strings.Trim(strings.TrimSpace(s.BasePath), "/"), "/")
+}
+
+// ValidateBasePath reports a base path that cannot be served as a plain
+// prefix: one with "..", empty segments or characters outside the unreserved
+// set, any of which would make the cookie Path, the redirects and the routes
+// disagree about where the panel is.
+func (s ServerConfig) ValidateBasePath() error {
+	base := s.Base()
+	if base == "" {
+		return nil
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(base, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("server.base_path %q: empty, \".\" and \"..\" segments are not allowed", s.BasePath)
+		}
+		if strings.IndexFunc(seg, notUnreserved) >= 0 {
+			return fmt.Errorf("server.base_path %q: only letters, digits and -._~ are allowed in a segment", s.BasePath)
+		}
+	}
+	return nil
+}
+
+// notUnreserved reports a rune outside RFC 3986's unreserved set.
+func notUnreserved(r rune) bool {
+	alnum := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+	return !alnum && !strings.ContainsRune("-._~", r)
+}
 
 // IsReadOnly reports whether every mutating operation is refused.
 func (s ServerConfig) IsReadOnly() bool { return s.ReadOnly }

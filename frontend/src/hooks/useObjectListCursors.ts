@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
+import { storageKey } from '@/lib/storageKey'
 
 /** How many listings keep their page tokens. Each is a few short strings. */
 const MAX_LISTINGS = 30
@@ -59,7 +60,7 @@ const useObjectListCursors = create<IObjectListCursorsStore>()(
         })
     }),
     {
-      name: 'object-list-cursors',
+      name: storageKey('object-list-cursors'),
       storage: createJSONStorage(() => sessionStorage)
     }
   )

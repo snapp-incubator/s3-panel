@@ -12,3 +12,16 @@ export const basePath: string = import.meta.env.BASE_URL.replace(/\/+$/, '')
 
 export const withBase = (path: string): string =>
   path.startsWith('/') ? `${basePath}${path}` : path
+
+/**
+ * Where the sign-in button sends the browser. The backend reports its login URL
+ * with the base path already on; an older backend reports a bare
+ * "/auth/login", which takes the prefix here.
+ */
+export const panelLoginUrl = (loginUrl: string): string => {
+  const url = loginUrl || '/auth/login'
+
+  return basePath && (url === basePath || url.startsWith(`${basePath}/`))
+    ? url
+    : withBase(url)
+}

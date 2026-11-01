@@ -17,8 +17,9 @@ import (
 type ConfigResponse struct {
 	// AuthMode is "s3" or "iam".
 	AuthMode string `json:"auth_mode"`
-	// LoginURL is where the browser should go to start a login. Empty in s3 mode,
-	// where the user types credentials into the panel instead.
+	// LoginURL is where the browser should go to start a login, base path
+	// included. Empty in s3 mode, where the user types credentials into the
+	// panel instead.
 	LoginURL string `json:"login_url,omitempty"`
 	// Region is the region this instance serves directly.
 	Region string `json:"region,omitempty"`
@@ -49,7 +50,7 @@ func (s *Server) HandleConfig() echo.HandlerFunc {
 			resp.AuthMode = config.AuthModeS3
 		}
 		if s.Config.Server.IsIAMMode() {
-			resp.LoginURL = "/auth/login"
+			resp.LoginURL = s.Config.Server.Base() + "/auth/login"
 			resp.IAMConsoleURL = strings.TrimRight(s.Config.Server.IAMConsoleURL, "/")
 		}
 		return c.JSON(http.StatusOK, resp)
