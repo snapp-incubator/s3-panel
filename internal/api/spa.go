@@ -1,0 +1,74 @@
+package api
+
+import (
+	"bytes"
+	"io/fs"
+	"net/http"
+	"path"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/snapp-incubator/S3-Panel/internal/web"
+)
+
+// cspNoncePlaceholder is what the frontend build writes wherever a nonce goes
+// (vite.config.ts, html.cspNonce). Each response replaces it with that
+// request's nonce, so the CSP can name exactly the scripts this page loads.
+const cspNoncePlaceholder = "__CSP_NONCE__"
+
+// backendPrefixes are the paths the SPA must never answer: they belong to
+// handlers registered on the router.
+var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/docs"}
+
+// frontendMiddleware serves the embedded frontend SPA for any GET or HEAD that
+// is not an API, auth, health or docs route. A path naming a built file is
+// served as that file; anything else falls back to index.html, so client-side
+// routes (e.g. /object-storage/...) resolve to the app.
+func frontendMiddleware() echo.MiddlewareFunc {
+	return spaMiddleware(web.FS())
+}
+
+// spaMiddleware is frontendMiddleware over any build, so tests can hand it one.
+func spaMiddleware(files fs.FS) echo.MiddlewareFunc {
+	index, err := fs.ReadFile(files, "index.html")
+	if err != nil {
+		// internal/web/dist always carries at least a placeholder index.html.
+		panic("embedded frontend has no index.html: " + err.Error())
+	}
+
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				return next(c)
+			}
+			p := req.URL.Path
+			for _, prefix := range backendPrefixes {
+				if p == prefix || strings.HasPrefix(p, prefix+"/") {
+					return next(c)
+				}
+			}
+
+			name := strings.TrimPrefix(path.Clean("/"+p), "/")
+			if name != "" && name != "index.html" {
+				if info, err := fs.Stat(files, name); err == nil && !info.IsDir() {
+					http.ServeFileFS(c.Response(), req, files, name)
+					return nil
+				}
+			}
+			return serveIndex(c, index)
+		}
+	}
+}
+
+// serveIndex answers with index.html, stamped with this request's CSP nonce.
+//
+// It is never cached: a cached copy would carry a nonce that no longer matches
+// the policy it is served with, and reusing one nonce across responses is what
+// a nonce exists to prevent.
+func serveIndex(c echo.Context, index []byte) error {
+	body := bytes.ReplaceAll(index, []byte(cspNoncePlaceholder), []byte(cspNonce(c)))
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.HTMLBlob(http.StatusOK, body)
+}

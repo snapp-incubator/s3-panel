@@ -66,6 +66,10 @@ func (s *Server) regionRouter() echo.MiddlewareFunc {
 			proxy := &httputil.ReverseProxy{
 				Rewrite: func(r *httputil.ProxyRequest) {
 					r.SetURL(target)
+					// This instance has already checked the browser's Origin
+					// against its OWN host. Passed on, it would name a host the
+					// remote region is not, and be refused there.
+					r.Out.Header.Del("Origin")
 				},
 			}
 

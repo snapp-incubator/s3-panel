@@ -7,13 +7,11 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	echoSwagger "github.com/swaggo/echo-swagger"
 	"go.uber.org/zap"
 
@@ -24,7 +22,6 @@ import (
 	"github.com/snapp-incubator/S3-Panel/internal/health"
 	"github.com/snapp-incubator/S3-Panel/internal/storage"
 	"github.com/snapp-incubator/S3-Panel/internal/storage/ceph"
-	"github.com/snapp-incubator/S3-Panel/internal/web"
 )
 
 type Server struct {
@@ -167,6 +164,10 @@ func (s *Server) initializeCache() error {
 func (s *Server) registerRouter() {
 	newRouter := echo.New()
 	newRouter.Validator = &CustomValidator{validator: NewRawValidator()}
+	// First, so every answer carries them, errors and the SPA included.
+	newRouter.Use(securityHeaders())
+	// Before anything that can change state, the login endpoints included.
+	newRouter.Use(s.refuseCrossOrigin())
 	if s.Config.Server.ServeFrontend {
 		newRouter.Use(frontendMiddleware())
 		s.logger.Info("### Serving embedded frontend ###")
@@ -174,25 +175,6 @@ func (s *Server) registerRouter() {
 		s.logger.Info("### Frontend serving disabled (API-only) ###")
 	}
 	s.Router = newRouter
-}
-
-// frontendMiddleware serves the embedded frontend SPA for any request that is
-// not an API, health or docs route. HTML5 falls back to index.html so
-// client-side routes (e.g. /object-storage/...) resolve to the app.
-func frontendMiddleware() echo.MiddlewareFunc {
-	return middleware.StaticWithConfig(middleware.StaticConfig{
-		Filesystem: web.HTTPFS(),
-		HTML5:      true,
-		Skipper: func(c echo.Context) bool {
-			p := c.Request().URL.Path
-			return strings.HasPrefix(p, "/api") ||
-				strings.HasPrefix(p, "/s3/api") ||
-				// The OIDC callback must reach its handler, not the SPA.
-				strings.HasPrefix(p, "/auth") ||
-				strings.HasPrefix(p, "/health") ||
-				strings.HasPrefix(p, "/docs")
-		},
-	})
 }
 
 func (s *Server) registerRoutes() {
@@ -231,7 +213,10 @@ func (s *Server) registerAPIGroup(prefix string) {
 	// API group, which is what makes a route added later fail CLOSED: it gets no
 	// credential rather than the caller's. A no-op in s3 mode, where those
 	// headers are how the user supplies the credentials the panel must use.
-	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), guard, s.actAsContext(), s.stripClientCredentials())
+	//
+	// requireJSONBody keeps HTML forms off every JSON route; only uploads take a
+	// multipart body.
+	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), requireJSONBody("/object/upload"), guard, s.actAsContext(), s.stripClientCredentials())
 
 	// A single gate in front of everything that could change the storage
 	// backend. It outranks the permission checks below on purpose: holding
@@ -306,7 +291,10 @@ func (s *Server) registerAPIGroup(prefix string) {
 		// access that outlives the request, which is not what "browsing and
 		// downloads stay intact" covers — and the config comment on ReadOnly and
 		// the README both already say read-only refuses share links.
-		apiRoutesObjects.GET("/share", s.HandleObjectShare(), s.gatewayChain(permRead, mutating)...)
+		//
+		// POST, not GET: minting a link is an action, and a GET can be triggered
+		// by any page that embeds an image tag pointing here.
+		apiRoutesObjects.POST("/share", s.HandleObjectShare(), s.gatewayChain(permRead, mutating)...)
 	}
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)

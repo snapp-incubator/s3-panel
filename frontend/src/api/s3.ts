@@ -186,8 +186,10 @@ const shareLink = async (
     expiration
   }
 
-  const response = await centralClient.get<IShareLinkResponse>(
+  // POST: minting a link is an action, not a read.
+  const response = await centralClient.post<IShareLinkResponse, undefined>(
     `/s3/api/object/share?${buildQueryString(params)}`,
+    undefined,
     inRegion(region)
   )
 

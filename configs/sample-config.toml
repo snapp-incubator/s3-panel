@@ -25,6 +25,14 @@ auth_token = "XXX"
 
 serve_frontend = true
 
+# Origins besides the panel's own that may send it state-changing requests
+# (POST, PUT, PATCH, DELETE). The panel refuses those from any other Origin,
+# including "null"; its own host and requests with no Origin (scripts, curl) are
+# always accepted. An origin listed in server_cors_config.allowed_origins counts
+# too (the "*" wildcard does not). The Vite dev server needs no entry: its proxy
+# presents the backend's own origin.
+# trusted_origins = ["https://console.example.com"]
+
 # auth_mode = "iam" only: the browser-facing address of the IAM console. When
 # set, each bucket card links to that bucket's page there, to manage who has
 # access. Leave unset to hide the link.

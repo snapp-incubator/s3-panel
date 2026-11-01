@@ -59,6 +59,12 @@ type ServerConfig struct {
 	// page there. It is not derived from the control URL, which may be an
 	// in-cluster address a browser cannot reach.
 	IAMConsoleURL string `json:"iam_console_url" koanf:"iam_console_url"`
+	// TrustedOrigins are origins besides the panel's own that may send it
+	// state-changing requests (POST, PUT, PATCH, DELETE), as
+	// "scheme://host[:port]". The panel's own host is always accepted, as is a
+	// request with no Origin header (a script, not a browser). Leave empty unless
+	// the SPA is served from somewhere else, e.g. the Vite dev server.
+	TrustedOrigins []string `json:"trusted_origins" koanf:"trusted_origins"`
 }
 
 // IsIAMMode reports whether the panel authenticates users with OIDC rather than
