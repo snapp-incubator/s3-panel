@@ -26,12 +26,17 @@ var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", 
 // built file is served as that file; anything else falls back to index.html, so
 // client-side routes (e.g. /object-storage/...) resolve to the app. Paths
 // outside the base path are not the panel's and fall through.
-func frontendMiddleware(base string) echo.MiddlewareFunc {
-	return spaMiddleware(web.FS(), base)
+//
+// render answers for a page; serveIndex is the plain answer.
+func frontendMiddleware(base string, render pageRenderer) echo.MiddlewareFunc {
+	return spaMiddleware(web.FS(), base, render)
 }
 
+// pageRenderer answers a request for one of the SPA's pages, given index.html.
+type pageRenderer func(c echo.Context, index []byte) error
+
 // spaMiddleware is frontendMiddleware over any build, so tests can hand it one.
-func spaMiddleware(files fs.FS, base string) echo.MiddlewareFunc {
+func spaMiddleware(files fs.FS, base string, render pageRenderer) echo.MiddlewareFunc {
 	index, err := fs.ReadFile(files, "index.html")
 	if err != nil {
 		// internal/web/dist always carries at least a placeholder index.html.
@@ -61,7 +66,7 @@ func spaMiddleware(files fs.FS, base string) echo.MiddlewareFunc {
 					return nil
 				}
 			}
-			return serveIndex(c, index)
+			return render(c, index)
 		}
 	}
 }

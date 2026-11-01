@@ -23,6 +23,17 @@ export interface IPanelConfigResponse {
    * Bucket cards link to each bucket's page there to manage access.
    */
   iam_console_url?: string
+  /**
+   * Set only when the panel is one app of a unified console: the console's
+   * shared header sits above it, and these are the console's pages.
+   */
+  panel?: IPanelConsole
+}
+
+export interface IPanelConsole {
+  app_key: string
+  home_url: string
+  signout_url: string
 }
 
 export interface IPanelSessionResponse {

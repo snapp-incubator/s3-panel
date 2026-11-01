@@ -44,6 +44,10 @@ type Server struct {
 
 	// readiness answers readyz from this mode's dependencies.
 	readiness *health.Readiness
+
+	// view decides who may use the panel when it is part of a unified console
+	// (panel.enabled); nil otherwise.
+	view *viewGate
 }
 
 func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Config, logger *zap.Logger) (*Server, error) {
@@ -63,6 +67,10 @@ func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Co
 	}
 
 	if err := s.registerIAMMode(ctx); err != nil {
+		return nil, err
+	}
+
+	if err := s.registerPanel(ctx); err != nil {
 		return nil, err
 	}
 
@@ -178,7 +186,7 @@ func (s *Server) registerRouter() {
 	// Before anything that can change state, the login endpoints included.
 	newRouter.Use(s.refuseCrossOrigin())
 	if s.Config.Server.ServeFrontend {
-		newRouter.Use(frontendMiddleware(s.Config.Server.Base()))
+		newRouter.Use(frontendMiddleware(s.Config.Server.Base(), s.renderPage))
 		s.logger.Info("### Serving embedded frontend ###")
 	} else {
 		s.logger.Info("### Frontend serving disabled (API-only) ###")
@@ -279,7 +287,10 @@ func (s *Server) registerAPIGroup(prefix string) {
 	//
 	// requireJSONBody keeps HTML forms off every JSON route; only uploads take a
 	// multipart body.
-	apiRoutes := s.Router.Group(s.Config.Server.Base()+prefix, s.CORSMiddleware(), requireJSONBody("/object/upload"), guard, s.actAsContext(), s.stripClientCredentials())
+	//
+	// requireView, right after the session guard, refuses people the console
+	// says may not view this app (panel.enabled only).
+	apiRoutes := s.Router.Group(s.Config.Server.Base()+prefix, s.CORSMiddleware(), requireJSONBody("/object/upload"), guard, s.requireView(), s.actAsContext(), s.stripClientCredentials())
 
 	// A single gate in front of everything that could change the storage
 	// backend. It outranks the permission checks below on purpose: holding

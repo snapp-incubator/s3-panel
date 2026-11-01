@@ -77,7 +77,7 @@ func TestLoginURLCarriesTheBasePath(t *testing.T) {
 func TestFrontendUnderTheBasePath(t *testing.T) {
 	e := echo.New()
 	e.Use(securityHeaders())
-	e.Use(spaMiddleware(builtFrontend, "/storage"))
+	e.Use(spaMiddleware(builtFrontend, "/storage", serveIndex))
 	e.GET("/storage/api/ping", func(c echo.Context) error { return c.String(http.StatusTeapot, "api") })
 
 	for path, want := range map[string]int{

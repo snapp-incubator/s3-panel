@@ -1,3 +1,5 @@
+import { storageKey } from '@/lib/storageKey'
+
 export interface RequestHeaders {
   'Content-Type': string
   Authorization?: string
@@ -85,8 +87,38 @@ export const interceptorResponseErrorConfig = async (
     }
 
     console.error('[Fetch Error]', errorResponse)
+    reloadIfAccessRevoked(response.status, parsedData)
     throw errorResponse
   }
 
   return response
+}
+
+/** The reason the backend gives when the console revoked access to this app. */
+const PANEL_VIEW_DENIED = 'panel_view_denied'
+
+/**
+ * Losing access to the app mid-session turns every call into a 403. Reloading
+ * hands the page back to the server, which answers with its "No access" page
+ * instead of the app. At most once a minute, so a refusal the page itself does
+ * not see cannot turn into a reload loop.
+ */
+const reloadIfAccessRevoked = (status: number, data: unknown) => {
+  if (
+    status !== 403 ||
+    typeof data !== 'object' ||
+    data === null ||
+    (data as { reason?: unknown }).reason !== PANEL_VIEW_DENIED
+  )
+    return
+
+  const key = storageKey('panel-access-reload')
+  try {
+    const last = Number(sessionStorage.getItem(key) ?? 0)
+    if (Date.now() - last < 60_000) return
+    sessionStorage.setItem(key, String(Date.now()))
+  } catch {
+    return
+  }
+  window.location.reload()
 }

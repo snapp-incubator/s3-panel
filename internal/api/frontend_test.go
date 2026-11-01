@@ -12,7 +12,7 @@ import (
 func serveFrontend(t *testing.T, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	e := echo.New()
-	e.Use(frontendMiddleware(""))
+	e.Use(frontendMiddleware("", serveIndex))
 	e.GET("/api/ping", func(c echo.Context) error { return c.String(http.StatusTeapot, "api") })
 	e.GET("/s3/api/ping", func(c echo.Context) error { return c.String(http.StatusTeapot, "s3api") })
 
