@@ -25,6 +25,7 @@ type Config struct {
 	Cors          ServerCorsConfig    `json:"server_cors_config"    koanf:"server_cors_config"`
 	ObjectStorage ObjectStorageConfig `json:"object_storage_config" koanf:"object_storage_config"`
 	OIDC          OIDCConfig          `json:"oidc,omitempty"        koanf:"oidc"`
+	Panel         PanelConfig         `json:"panel"                 koanf:"panel"`
 }
 
 func Provide(configPath string) Config {
@@ -98,5 +99,6 @@ func redacted(c Config) Config {
 	c.ObjectStorage.STSClientKey = mask(c.ObjectStorage.STSClientKey)
 	c.OIDC.ClientSecret = mask(c.OIDC.ClientSecret)
 	c.OIDC.CookieKey = mask(c.OIDC.CookieKey)
+	c.Panel.APIKey = mask(c.Panel.APIKey)
 	return c
 }

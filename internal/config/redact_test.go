@@ -19,6 +19,7 @@ func TestRedactedHidesEverySecret(t *testing.T) {
 	c.ObjectStorage.STSClientKey = secret
 	c.OIDC.ClientSecret = secret
 	c.OIDC.CookieKey = secret
+	c.Panel.APIKey = secret
 
 	out, err := json.Marshal(redacted(c))
 	if err != nil {
@@ -27,8 +28,8 @@ func TestRedactedHidesEverySecret(t *testing.T) {
 	if strings.Contains(string(out), secret) {
 		t.Fatalf("a secret survived redaction:\n%s", out)
 	}
-	if n := strings.Count(string(out), "[redacted]"); n != 6 {
-		t.Fatalf("redacted %d fields, want 6:\n%s", n, out)
+	if n := strings.Count(string(out), "[redacted]"); n != 7 {
+		t.Fatalf("redacted %d fields, want 7:\n%s", n, out)
 	}
 	// The original is untouched: redaction is for the log only.
 	if c.OIDC.ClientSecret != secret {

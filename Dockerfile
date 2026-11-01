@@ -39,7 +39,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /fe/dist ./internal/web/dist
-RUN go build -v -o s3-panel ./cmd/s3-panel
+# The release version again, for the backend (it reports it when it registers
+# with a console). Empty falls back to the module version, then "dev".
+ARG APP_VERSION
+RUN go build -v -ldflags "-X github.com/snapp-incubator/S3-Panel/internal/version.Version=${APP_VERSION}" -o s3-panel ./cmd/s3-panel
 
 # 3) Minimal runtime image — a single binary that serves the API and the SPA.
 FROM alpine:3.24

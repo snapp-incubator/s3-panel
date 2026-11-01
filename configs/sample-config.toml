@@ -104,3 +104,40 @@ secret_key = ""
 # Where a sign-in lands. A root-relative value is relative to base_path ("/"
 # lands on the panel's own home).
 # post_login_redirect = "/"
+
+# --- Unified console (optional, off by default) ------------------------------
+#
+# Join a console that serves several apps under one host, each at its own path
+# (server.base_path), with one sign-in and a shared header. Requires
+# auth_mode = "iam". When enabled the panel:
+#   - registers its manifest (description, version, nav, links, health paths)
+#     with the console's app registry at startup, and every register_interval;
+#   - asks the registry, by the person's OIDC subject, whether they may view the
+#     app: at sign-in, then at most once a minute. If the registry cannot
+#     answer, a yes from the last 10 minutes still stands; after that the panel
+#     refuses ("No access" page, 403 for API calls);
+#   - embeds the console's header above the app (header_script).
+# Nothing here is needed to run the panel on its own.
+#
+# [panel]
+# enabled = true
+# app_key = "storage"                       # the key the console admitted the app under
+# api_url = "https://iam.example.com/api"   # default: object_storage_config.iam_api_url
+# # api_key: the app credential (app_…). A secret: set s3panel_panel__api_key.
+# description = "Buckets, objects and share links"
+# header_script = "/panel/header/v1/header.js"
+# home_url = "/"
+# signout_url = "/signout"
+# register_interval = "6h"
+#
+# # Navigation in the console header. Paths must sit under base_path. Default:
+# # the bucket list.
+# [[panel.nav]]
+# label = "Buckets"
+# path = "/storage/object-storage/s3-bucket/buckets"
+#
+# # How the console opens catalog resources here. The resource pattern must be
+# # one the app was admitted for. None by default.
+# [[panel.links]]
+# resource = "ceph-*|bucket"
+# path = "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"

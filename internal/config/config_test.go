@@ -64,3 +64,43 @@ func TestBasePathNormalises(t *testing.T) {
 		}
 	}
 }
+
+// TestProvidePanelTables: nav and links are arrays of tables in TOML, and must
+// arrive as such; the app key comes from the environment like other secrets.
+func TestProvidePanelTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[server]
+base_path = "/storage"
+
+[panel]
+enabled = true
+
+[[panel.nav]]
+label = "Buckets"
+path = "/storage/object-storage/s3-bucket/buckets"
+
+[[panel.links]]
+resource = "ceph-*|bucket"
+path = "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"
+`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("s3panel_panel__api_key", "app_from_env")
+
+	cfg := Provide(path)
+	p := cfg.Panel.WithDefaults()
+	if !p.Enabled || p.APIKey != "app_from_env" {
+		t.Errorf("panel = %+v", p)
+	}
+	if len(p.Nav) != 1 || p.Nav[0].Label != "Buckets" || len(p.Links) != 1 || p.Links[0].Resource != "ceph-*|bucket" {
+		t.Errorf("nav/links = %+v / %+v", p.Nav, p.Links)
+	}
+	if p.AppKey != DefaultPanelAppKey || p.HeaderScript != DefaultPanelHeaderScript || p.RegisterInterval != DefaultPanelRegisterInterval {
+		t.Errorf("defaults not applied: %+v", p)
+	}
+	if DefaultConfig().Panel.Enabled {
+		t.Error("the panel integration is on by default")
+	}
+}

@@ -29,6 +29,18 @@ type ConfigResponse struct {
 	// IAMConsoleURL is where bucket cards link to manage access. Only reported
 	// in iam mode, and empty when the deployment has not configured it.
 	IAMConsoleURL string `json:"iam_console_url,omitempty"`
+	// Panel is set only when the panel is part of a unified console
+	// (panel.enabled), and tells the SPA to make room for the console's header.
+	Panel *PanelInfo `json:"panel,omitempty"`
+}
+
+// PanelInfo is what the SPA needs to know about the console it is part of.
+type PanelInfo struct {
+	// AppKey is this app's key in the console.
+	AppKey string `json:"app_key"`
+	// HomeURL and SignOutURL are the console's home and sign-out pages.
+	HomeURL    string `json:"home_url"`
+	SignOutURL string `json:"signout_url"`
 }
 
 // HandleConfig serves GET /config.
@@ -52,6 +64,10 @@ func (s *Server) HandleConfig() echo.HandlerFunc {
 		if s.Config.Server.IsIAMMode() {
 			resp.LoginURL = s.Config.Server.Base() + "/auth/login"
 			resp.IAMConsoleURL = strings.TrimRight(s.Config.Server.IAMConsoleURL, "/")
+		}
+		if s.Config.Panel.Enabled {
+			p := s.Config.Panel.WithDefaults()
+			resp.Panel = &PanelInfo{AppKey: p.AppKey, HomeURL: p.HomeURL, SignOutURL: p.SignOutURL}
 		}
 		return c.JSON(http.StatusOK, resp)
 	}

@@ -44,6 +44,10 @@ type Authenticator struct {
 	// console obtained for the person; left nil, logout just clears the cookie.
 	OnLogout func(context.Context, Session)
 
+	// OnSignIn runs once a sign-in has completed and its session is saved, with
+	// that session. Left nil, nothing runs.
+	OnSignIn func(context.Context, Session)
+
 	// ResolveAdmin asks IAM whether the person holding an access token is an
 	// admin. The server sets it in iam mode; left nil (or failing) the session
 	// keeps no IAM answer and admin falls back to the token's groups claim.
@@ -209,6 +213,9 @@ func (a *Authenticator) Callback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not persist the session")
 	}
 	a.expireLegacyCookies(c, stateCookieName)
+	if a.OnSignIn != nil {
+		a.OnSignIn(ctx, session)
+	}
 
 	if next != "" {
 		return c.Redirect(http.StatusFound, next)

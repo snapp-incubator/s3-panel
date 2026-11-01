@@ -186,3 +186,87 @@ type OIDCConfig struct {
 	// (minutes) and refreshed underneath the session. Defaults to 12h.
 	SessionTTL time.Duration `json:"session_ttl" koanf:"session_ttl"`
 }
+
+// PanelConfig joins this panel to a unified console: several apps served under
+// one host, each at its own path, sharing one sign-in and one header.
+//
+// Off by default, and nothing in it is needed to run the panel on its own.
+// When on, the panel registers itself with the console's app registry at
+// startup, refuses anyone the registry says may not view it, and loads the
+// console's shared header. It requires auth_mode "iam": the registry is asked
+// about the person by their OIDC subject.
+type PanelConfig struct {
+	Enabled bool `json:"enabled" koanf:"enabled"`
+	// AppKey is the key the console admitted this app under (e.g. "storage").
+	// The registry identifies the app by APIKey; this names it to the header.
+	AppKey string `json:"app_key" koanf:"app_key"`
+	// APIURL is the console's JSON API base, ending in /api. Defaults to
+	// object_storage_config.iam_api_url (or its default).
+	APIURL string `json:"api_url" koanf:"api_url"`
+	// APIKey is the app credential ("app_…") the console minted at admission.
+	// A secret: supply it as the s3panel_panel__api_key environment variable.
+	APIKey string `json:"api_key" koanf:"api_key"`
+	// Description is the one-line summary the console shows for the app.
+	Description string `json:"description" koanf:"description"`
+	// Nav is the app's navigation in the console header. Every path must sit
+	// under server.base_path. Defaults to the bucket list.
+	Nav []PanelNavItem `json:"nav" koanf:"nav"`
+	// Links tell the console how to open catalog resources here, e.g.
+	// {resource = "ceph-*|bucket", path = "/storage/…/{name}?region={region}"}.
+	// Each resource pattern must be one the app was admitted for. None by
+	// default.
+	Links []PanelLink `json:"links" koanf:"links"`
+	// HeaderScript is the console header bundle. Defaults to
+	// "/panel/header/v1/header.js".
+	HeaderScript string `json:"header_script" koanf:"header_script"`
+	// HomeURL and SignOutURL are the console's home and sign-out pages, linked
+	// from the "No access" page and the fallback bar. Default "/" and
+	// "/signout".
+	HomeURL    string `json:"home_url"    koanf:"home_url"`
+	SignOutURL string `json:"signout_url" koanf:"signout_url"`
+	// RegisterInterval is how often the manifest is registered again after the
+	// first success, so the console sees the registration as live. Defaults to
+	// 6h.
+	RegisterInterval time.Duration `json:"register_interval" koanf:"register_interval"`
+}
+
+// PanelNavItem is one entry of the app's navigation in the console header.
+type PanelNavItem struct {
+	Label string `json:"label" koanf:"label"`
+	Path  string `json:"path"  koanf:"path"`
+}
+
+// PanelLink says how the console opens a catalog resource in this app.
+type PanelLink struct {
+	Resource string `json:"resource" koanf:"resource"`
+	Path     string `json:"path"     koanf:"path"`
+}
+
+// Panel defaults, applied where the setting is left empty.
+const (
+	DefaultPanelAppKey           = "storage"
+	DefaultPanelDescription      = "Buckets, objects and share links"
+	DefaultPanelHeaderScript     = "/panel/header/v1/header.js"
+	DefaultPanelHomeURL          = "/"
+	DefaultPanelSignOutURL       = "/signout"
+	DefaultPanelRegisterInterval = 6 * time.Hour
+)
+
+// WithDefaults fills every empty setting with its default.
+func (p PanelConfig) WithDefaults() PanelConfig {
+	or := func(v, def string) string {
+		if strings.TrimSpace(v) == "" {
+			return def
+		}
+		return strings.TrimSpace(v)
+	}
+	p.AppKey = or(p.AppKey, DefaultPanelAppKey)
+	p.Description = or(p.Description, DefaultPanelDescription)
+	p.HeaderScript = or(p.HeaderScript, DefaultPanelHeaderScript)
+	p.HomeURL = or(p.HomeURL, DefaultPanelHomeURL)
+	p.SignOutURL = or(p.SignOutURL, DefaultPanelSignOutURL)
+	if p.RegisterInterval <= 0 {
+		p.RegisterInterval = DefaultPanelRegisterInterval
+	}
+	return p
+}

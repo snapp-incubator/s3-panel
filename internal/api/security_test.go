@@ -26,7 +26,7 @@ func newSecuredRouter(s *Server) *echo.Echo {
 	e := echo.New()
 	e.Use(securityHeaders())
 	e.Use(s.refuseCrossOrigin())
-	e.Use(spaMiddleware(builtFrontend, ""))
+	e.Use(spaMiddleware(builtFrontend, "", serveIndex))
 	ok := func(c echo.Context) error { return c.NoContent(http.StatusNoContent) }
 	e.POST("/api/thing", ok, requireJSONBody("/object/upload"))
 	e.POST("/api/object/upload", ok, requireJSONBody("/object/upload"))
