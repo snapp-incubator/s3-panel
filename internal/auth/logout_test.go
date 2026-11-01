@@ -117,3 +117,20 @@ func assertCookieCleared(t *testing.T, rec *httptest.ResponseRecorder) {
 	}
 	t.Error("the session cookie was not cleared")
 }
+
+// TestLogoutIsPOSTOnly: signing out revokes storage credentials, so it must
+// not be reachable by a GET that any page could trigger with an image tag.
+func TestLogoutIsPOSTOnly(t *testing.T) {
+	e := echo.New()
+	newLogoutAuthenticator(t).RegisterRoutes(e)
+	for _, r := range e.Routes() {
+		if r.Path == "/auth/logout" && r.Method != http.MethodPost {
+			t.Errorf("/auth/logout is routed for %s", r.Method)
+		}
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/auth/logout", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /auth/logout = %d, want 405", rec.Code)
+	}
+}

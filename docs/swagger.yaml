@@ -604,7 +604,7 @@ paths:
       tags:
       - Object
   /api/object/share:
-    get:
+    post:
       consumes:
       - application/json
       description: This function uses the PreSign feature of S3 to share object link
@@ -621,23 +621,20 @@ paths:
         required: true
         type: string
       - description: bucket name
-        in: body
+        in: query
         name: bucket
         required: true
-        schema:
-          type: string
+        type: string
       - description: objects name
-        in: body
+        in: query
         name: object
         required: true
-        schema:
-          type: string
+        type: string
       - default: 1h
         description: URL expiration time
-        in: body
+        in: query
         name: expiration
-        schema:
-          type: string
+        type: string
       produces:
       - application/json
       responses:

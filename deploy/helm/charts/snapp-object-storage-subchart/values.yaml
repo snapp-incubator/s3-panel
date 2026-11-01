@@ -35,7 +35,9 @@ httpproxy:
   # serves it at the root.
   pathPrefix: ""
   cors:
-    # Permissive credentialed CORS for any origin. Not needed when the panel
-    # serves its own frontend (same origin); turn it off then.
-    enabled: true
+    # Credentialed CORS for ANY origin, which lets every website read the
+    # panel's answers with the visitor's session. Off by default: the panel
+    # serves its own frontend, so its pages are same-origin and need none. Turn
+    # it on only for a frontend served from another host.
+    enabled: false
 

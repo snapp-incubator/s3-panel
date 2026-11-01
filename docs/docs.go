@@ -672,7 +672,7 @@ const docTemplate = `{
             }
         },
         "/api/object/share": {
-            "get": {
+            "post": {
                 "description": "This function uses the PreSign feature of S3 to share object link with expiration time with users",
                 "consumes": [
                     "application/json"
@@ -700,31 +700,25 @@ const docTemplate = `{
                         "required": true
                     },
                     {
+                        "type": "string",
                         "description": "bucket name",
                         "name": "bucket",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
+                        "in": "query",
+                        "required": true
                     },
                     {
+                        "type": "string",
                         "description": "objects name",
                         "name": "object",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "type": "string"
-                        }
+                        "in": "query",
+                        "required": true
                     },
                     {
+                        "type": "string",
                         "default": "1h",
                         "description": "URL expiration time",
                         "name": "expiration",
-                        "in": "body",
-                        "schema": {
-                            "type": "string"
-                        }
+                        "in": "query"
                     }
                 ],
                 "responses": {

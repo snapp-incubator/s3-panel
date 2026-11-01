@@ -394,19 +394,21 @@ func (s *Server) HandleObjectHead() echo.HandlerFunc {
 //	@Produce		json
 //	@Param			access_key	header		string								true	"User given AccessKey"
 //	@Param			secret_key	header		string								true	"User given SecretKey"
-//	@Param			bucket		body		string								true	"bucket name"
-//	@Param			object		body		string								true	"objects name"
-//	@Param			expiration	body		string								false	"URL expiration time"	default(1h)
+//	@Param			bucket		query		string								true	"bucket name"
+//	@Param			object		query		string								true	"objects name"
+//	@Param			expiration	query		string								false	"URL expiration time"	default(1h)
 //	@Success		200			{object}	storage.ObjectShareResponse	"Successful response with object url"
 //	@Failure		400			{object}	storage.OperationErrWithMsg	"Bad Request"
 //	@Failure		401			{object}	string								"Unauthorized"
 //	@Failure		422			{object}	storage.OperationErrWithMsg	"Action didn't complete"
 //	@Failure		500			{object}	storage.OperationErrWithMsg	"Internal server error"
-//	@Router			/api/object/share [get]
+//	@Router			/api/object/share [post]
 func (s *Server) HandleObjectShare() echo.HandlerFunc {
 	return func(c echo.Context) error {
 		var req storage.ObjectRequestMeta
-		err := c.Bind(&req)
+		// The parameters stay in the query string. c.Bind reads the query only
+		// for GET, DELETE and HEAD, so a POST binds it explicitly.
+		err := (&echo.DefaultBinder{}).BindQueryParams(c, &req)
 		if err != nil {
 			s.logger.Error(err.Error())
 			return c.JSON(http.StatusBadRequest, storage.OperationErrWithMsg{Message: err.Error()})

@@ -105,8 +105,9 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Authenticator, error) {
 func (a *Authenticator) RegisterRoutes(e *echo.Echo) {
 	e.GET("/auth/login", a.Login)
 	e.GET("/auth/callback", a.Callback)
+	// POST only: signing out revokes storage credentials, and a GET can be
+	// triggered cross-site by an image tag.
 	e.POST("/auth/logout", a.Logout)
-	e.GET("/auth/logout", a.Logout)
 	e.GET("/auth/me", a.Me)
 }
 

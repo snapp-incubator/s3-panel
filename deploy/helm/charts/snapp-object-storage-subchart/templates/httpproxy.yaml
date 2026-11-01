@@ -6,9 +6,10 @@
        request reaches the panel, and "/" redirects to it. Empty serves the
        panel at the root. */}}
 {{- $prefix := trimSuffix "/" (default "" .Values.httpproxy.pathPrefix) }}
-{{- /* CORS is on by default (the chart's historical behaviour) but a panel that
-       serves its own frontend is same-origin and needs none. */}}
-{{- $cors := dig "cors" "enabled" true .Values.httpproxy }}
+{{- /* CORS is off by default: a panel that serves its own frontend is
+       same-origin and needs none, and this policy allows credentialed reads
+       from any origin. */}}
+{{- $cors := dig "cors" "enabled" false .Values.httpproxy }}
 apiVersion: projectcontour.io/v1
 kind: HTTPProxy
 metadata:
