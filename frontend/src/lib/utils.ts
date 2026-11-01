@@ -4,6 +4,7 @@ import { twMerge } from 'tailwind-merge'
 
 import usePanelSession from '@/hooks/usePanelSession'
 import useS3Credentials from '@/hooks/useS3Credentials'
+import { basePath, withBase } from '@/lib/basePath'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -90,14 +91,47 @@ export function timeAgo(dateStr: string): string {
  * only the credential store would bounce every signed-in user back to a login
  * screen they have no credentials for.
  */
-export function handleAuthRedirect(to: string, shouldBeAuthenticated = true) {
+/** The part of a router location a return path is built from. */
+interface IReturnLocation {
+  pathname: string
+  searchStr: string
+}
+
+/**
+ * The browser path of a router location: base path, path and query. Route
+ * paths never begin with the base path, so one that does already carries it.
+ */
+function browserPath({ pathname, searchStr }: IReturnLocation): string {
+  const path =
+    basePath && (pathname === basePath || pathname.startsWith(`${basePath}/`))
+      ? pathname
+      : withBase(pathname)
+
+  return `${path}${searchStr}`
+}
+
+/**
+ * Sends a visitor who is not signed in to the sign-in page (or a signed-in one
+ * away from it). The page they were going to rides along as `next`, so signing
+ * in lands them there rather than on the bucket list; the backend decides
+ * whether it is safe to return to.
+ */
+export function handleAuthRedirect(
+  to: string,
+  shouldBeAuthenticated = true,
+  location?: IReturnLocation
+) {
   const panel = usePanelSession.getState()
   const isLogin = panel.isIAMMode()
     ? panel.isAuthenticated()
     : useS3Credentials.getState().isLogin()
 
   if (shouldBeAuthenticated && !isLogin) {
-    throw redirect({ to }) // Redirect if user is not logged in but should be
+    // Redirect if user is not logged in but should be
+    throw redirect({
+      to,
+      search: location ? { next: browserPath(location) } : undefined
+    })
   }
 
   if (!shouldBeAuthenticated && isLogin) {

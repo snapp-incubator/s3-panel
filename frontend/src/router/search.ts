@@ -61,3 +61,14 @@ export const parseBucketDetailSearch = (
 ): IBucketDetailSearch => ({
   region: text(search.region)
 })
+
+export interface ISignInSearch {
+  /** Where to go once signed in; validated by the backend, not here. */
+  next?: string
+}
+
+export const parseSignInSearch = (
+  search: Record<string, unknown>
+): ISignInSearch => ({
+  next: typeof search.next === 'string' && search.next ? search.next : undefined
+})
