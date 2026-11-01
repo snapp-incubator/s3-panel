@@ -14,6 +14,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -45,9 +46,16 @@ type Session struct {
 	// ActAs is the IAM debug user this admin is acting as, or "" (IAM proposal
 	// 008). The identity fields above stay the real admin's; every call to IAM
 	// carries X-IAM-Act-As, and IAM judges it as the debug user.
-	ActAs        string `json:"act_as,omitempty"`
+	ActAs string `json:"act_as,omitempty"`
+	// SID is the provider's session ID (Keycloak's "sid" claim): what a
+	// back-channel logout or a sign-out deny-list would match this session by.
+	SID          string `json:"sid,omitempty"`
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
+	// IDToken is the raw ID token, kept as the id_token_hint an RP-initiated
+	// logout at the provider needs to skip its confirmation page. It is the
+	// first thing dropped when the cookie would not fit (Authenticator.Save).
+	IDToken string `json:"id_token,omitempty"`
 	// ExpiresAt is when the ACCESS TOKEN lapses and must be refreshed.
 	ExpiresAt time.Time `json:"expires_at"`
 	// SessionExpiresAt is when the sign-in itself ends and the user must
@@ -102,6 +110,9 @@ func (s Session) Display() string {
 	}
 	return "unknown"
 }
+
+// ErrCookieTooLarge is Encode refusing a session the browser would drop.
+var ErrCookieTooLarge = errors.New("session cookie too large")
 
 // maxCookieBytes is the practical per-cookie ceiling browsers enforce. A cookie
 // over it is dropped SILENTLY: the server sets it, the browser discards it, and
@@ -174,8 +185,8 @@ func (c *CookieCodec) Encode(s Session) (string, error) {
 
 	if len(encoded) > maxCookieBytes {
 		return "", fmt.Errorf(
-			"session cookie would be %d bytes, over the %d-byte limit browsers enforce; "+
-				"the identity provider's tokens are unusually large", len(encoded), maxCookieBytes)
+			"%w: %d bytes, over the %d-byte limit browsers enforce; "+
+				"the identity provider's tokens are unusually large", ErrCookieTooLarge, len(encoded), maxCookieBytes)
 	}
 	return encoded, nil
 }

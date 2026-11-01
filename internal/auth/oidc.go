@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -179,7 +180,7 @@ func (a *Authenticator) Callback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, "the ID token nonce does not match")
 	}
 
-	session, err := a.sessionFromToken(idToken, token)
+	session, err := a.sessionFromToken(idToken, rawID, token)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 	}
@@ -305,6 +306,13 @@ func (a *Authenticator) refresh(ctx context.Context, prior Session) (Session, er
 		// the next refresh.
 		next.RefreshToken = token.RefreshToken
 	}
+	// Keycloak issues a fresh ID token on refresh. It replaces the stored hint
+	// only once verified, so a refresh response cannot plant one.
+	if rawID, ok := token.Extra("id_token").(string); ok && rawID != "" && a.verifier != nil {
+		if _, err := a.verifier.Verify(ctx, rawID); err == nil {
+			next.IDToken = rawID
+		}
+	}
 	// The person's groups may have changed since sign-in; the new token is the
 	// moment to ask IAM again.
 	return a.withIAMAdmin(ctx, next), nil
@@ -336,8 +344,20 @@ func (a *Authenticator) withIAMAdmin(ctx context.Context, s Session) Session {
 // The cookie's lifetime follows the SIGN-IN, not the access token: a cookie that
 // expired with the access token would drop the refresh token on the floor and
 // end the session minutes after it began.
+//
+// A session that will not fit is saved without its ID token rather than not at
+// all. The ID token is only a hint for a sign-out at the provider; the person
+// cannot use the panel without the rest.
 func (a *Authenticator) Save(c echo.Context, s Session) error {
 	value, err := a.codec.Encode(s)
+	if errors.Is(err, ErrCookieTooLarge) && s.IDToken != "" {
+		if a.Logger != nil {
+			a.Logger.Warn("session cookie too large with the ID token; keeping the session without it",
+				zap.String("subject", s.Subject))
+		}
+		s.IDToken = ""
+		value, err = a.codec.Encode(s)
+	}
 	if err != nil {
 		return err
 	}
@@ -353,7 +373,7 @@ func (a *Authenticator) Save(c echo.Context, s Session) error {
 func (a *Authenticator) AdminGroups() []string { return a.cfg.AdminGroups }
 
 // sessionFromToken projects the verified claims into a Session.
-func (a *Authenticator) sessionFromToken(idToken *oidc.IDToken, token *oauth2.Token) (Session, error) {
+func (a *Authenticator) sessionFromToken(idToken *oidc.IDToken, rawID string, token *oauth2.Token) (Session, error) {
 	claims := map[string]any{}
 	if err := idToken.Claims(&claims); err != nil {
 		return Session{}, fmt.Errorf("could not read the ID token claims")
@@ -364,8 +384,10 @@ func (a *Authenticator) sessionFromToken(idToken *oidc.IDToken, token *oauth2.To
 		Email:        stringClaim(claims, "email"),
 		Name:         stringClaim(claims, "name"),
 		Groups:       stringsClaim(claims, a.groupsClaim()),
+		SID:          stringClaim(claims, "sid"),
 		AccessToken:  token.AccessToken,
 		RefreshToken: token.RefreshToken,
+		IDToken:      rawID,
 		ExpiresAt:    token.Expiry,
 		// How long the person stays signed in, independent of how often the
 		// access token underneath is rotated.
