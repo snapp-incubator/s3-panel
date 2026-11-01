@@ -6,6 +6,12 @@
        request reaches the panel, and "/" redirects to it. Empty serves the
        panel at the root. */}}
 {{- $prefix := trimSuffix "/" (default "" .Values.httpproxy.pathPrefix) }}
+{{- /* config.base_path is the other way to serve under a prefix: the panel
+       itself serves there, so the prefix must reach it unstripped. */}}
+{{- $base := trimSuffix "/" (default "" .Values.config.base_path) }}
+{{- if and $prefix $base }}
+{{- fail "set httpproxy.pathPrefix (the proxy strips the prefix) or config.base_path (the panel serves under it), not both" }}
+{{- end }}
 {{- /* CORS is off by default: a panel that serves its own frontend is
        same-origin and needs none, and this policy allows credentialed reads
        from any origin. */}}
@@ -18,7 +24,7 @@ metadata:
 spec:
   httpVersions:
   - http/1.1
-  ingressClassName: private
+  ingressClassName: {{ .Values.httpproxy.ingressClassName | default "private" }}
   routes:
   - enableWebsockets: true
     {{- if $prefix }}
@@ -28,6 +34,9 @@ spec:
       replacePrefix:
       - prefix: {{ $prefix }}
         replacement: /
+    {{- else if $base }}
+    conditions:
+    - prefix: {{ $base }}
     {{- end }}
     loadBalancerPolicy:
       strategy: RoundRobin
@@ -38,11 +47,11 @@ spec:
     timeoutPolicy:
       idleConnection: 15s
       response: 30s
-  {{- if $prefix }}
+  {{- with (or $prefix $base) }}
   - conditions:
     - prefix: /
     requestRedirectPolicy:
-      path: {{ $prefix }}/
+      path: {{ . }}/
       statusCode: 302
   {{- end }}
   virtualhost:

@@ -23,6 +23,7 @@ snapp-object-store-dev:
 # Mounted with envFrom, so its keys become environment variables:
 #   s3panel_oidc__client_secret   (omit for a public OIDC client)
 #   s3panel_oidc__cookie_key      (REQUIRED in iam mode; openssl rand -base64 32)
+#   s3panel_panel__api_key        (when config.panel.enabled; the app credential)
 # Left empty the container gets no env, which is correct for auth_mode "s3".
 existingSecret: ""
 
@@ -30,6 +31,8 @@ existingSecret: ""
 # Service, e.g. the panel served at a path prefix of IAM's console host.
 httpproxy:
   enabled: true
+  # The Contour ingress class both HTTPProxies below are programmed on.
+  ingressClassName: private
   # Serve the panel under this prefix of its own host (e.g. "/s3-panel", for an
   # image built with VITE_BASE_PATH=/s3-panel); "/" then redirects there. Empty
   # serves it at the root.
@@ -41,3 +44,12 @@ httpproxy:
     # it on only for a frontend served from another host.
     enabled: false
 
+  # An HTTPProxy with no virtualhost, for another chart's root HTTPProxy to
+  # include: the panel at a path of a host it shares with other apps (a unified
+  # console). Needs config.base_path, which must be the prefix the including
+  # proxy routes to it; the prefix is not stripped. Independent of `enabled`
+  # above, which is the panel's own host: during a move both may exist.
+  include:
+    enabled: false
+    # Defaults to "<chart name>-include".
+    name: ""

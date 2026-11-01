@@ -20,6 +20,12 @@ data:
     download_path = {{ .Values.config.download_path | default "/tmp" | quote }}
     serve_frontend = {{ dig "serve_frontend" true .Values.config }}
     region = {{ .Values.config.region | default "" | quote }}
+{{- with .Values.config.base_path }}
+    base_path = {{ . | quote }}
+{{- end }}
+{{- with .Values.config.trusted_origins }}
+    trusted_origins = [{{ range $i, $o := . }}{{ if $i }}, {{ end }}{{ $o | quote }}{{ end }}]
+{{- end }}
 {{- with .Values.config.iam_console_url }}
     iam_console_url = {{ . | quote }}
 {{- end }}
@@ -61,6 +67,31 @@ data:
 {{- end }}
 {{- with .Values.config.oidc.admin_groups }}
     admin_groups = [{{ range $i, $g := . }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
+{{- end }}
+{{- end }}
+{{- /* The app key (s3panel_panel__api_key) is a credential: it comes from
+       existingSecret, never from here. */}}
+{{- $panel := dig "panel" dict .Values.config }}
+{{- if dig "enabled" false $panel }}
+
+    [panel]
+    enabled = true
+{{- range $key := list "app_key" "api_url" "description" "header_script" "home_url" "signout_url" "register_interval" }}
+{{- with (get $panel $key) }}
+    {{ $key }} = {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- range (dig "nav" list $panel) }}
+
+    [[panel.nav]]
+    label = {{ required "panel.nav entries need a label" .label | quote }}
+    path = {{ required "panel.nav entries need a path" .path | quote }}
+{{- end }}
+{{- range (dig "links" list $panel) }}
+
+    [[panel.links]]
+    resource = {{ required "panel.links entries need a resource" .resource | quote }}
+    path = {{ required "panel.links entries need a path" .path | quote }}
 {{- end }}
 {{- end }}
 {{- end }}
