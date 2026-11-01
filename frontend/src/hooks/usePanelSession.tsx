@@ -6,7 +6,11 @@ import {
   PanelRequestError
 } from '@/api/panel'
 import { withBase } from '@/lib/basePath'
-import type { IPanelSessionResponse, TAuthMode } from '@/types/s3/panel.types'
+import type {
+  IPanelConsole,
+  IPanelSessionResponse,
+  TAuthMode
+} from '@/types/s3/panel.types'
 
 interface IPanelSessionStore {
   /** null until the panel config has been read. */
@@ -16,6 +20,8 @@ interface IPanelSessionStore {
   readOnly: boolean
   /** Where bucket cards link to manage access; empty hides the link. */
   iamConsoleUrl: string
+  /** The unified console this panel is part of, or null when standalone. */
+  panel: IPanelConsole | null
   session: IPanelSessionResponse | null
   loading: boolean
   /** Set when bootstrap could not reach the server; null once it succeeds. */
@@ -53,6 +59,7 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   loginUrl: '',
   readOnly: false,
   iamConsoleUrl: '',
+  panel: null,
   session: null,
   loading: false,
   bootstrapError: null,
@@ -92,6 +99,7 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
           loginUrl: config.login_url ?? '',
           readOnly: config.read_only === true,
           iamConsoleUrl: config.iam_console_url ?? '',
+          panel: config.panel ?? null,
           session,
           bootstrapError: null
         })
@@ -143,12 +151,15 @@ const usePanelSession = create<IPanelSessionStore>((set, get) => ({
   isAdmin: () => get().session?.is_admin === true,
 
   logout: async () => {
+    // Best effort: the console's sign-out page signs out of this app too, so a
+    // failure here must not stop the person reaching it.
     await fetch(withBase('/auth/logout'), {
       method: 'POST',
       credentials: 'include'
-    })
+    }).catch(() => undefined)
     set({ session: null })
-    window.location.href = withBase('/')
+    // Part of a console, signing out means signing out of every app in it.
+    window.location.href = get().panel?.signout_url ?? withBase('/')
   }
 }))
 

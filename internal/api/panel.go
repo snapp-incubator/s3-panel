@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -295,14 +297,53 @@ func (s *Server) keepRegistered(ctx context.Context, panel *control.Panel, manif
 // "No access" page instead; a visitor who is not signed in gets the SPA, which
 // offers the sign-in.
 func (s *Server) renderPage(c echo.Context, index []byte) error {
-	if s.view != nil && s.auth != nil {
+	if s.view == nil {
+		return serveIndex(c, index)
+	}
+	if s.auth != nil {
 		if session, ok := s.auth.Load(c); ok {
 			if verdict := s.view.check(c.Request().Context(), session.Subject); verdict != viewAllowed {
 				return s.renderNoAccess(c, verdict)
 			}
 		}
 	}
-	return serveIndex(c, index)
+	return serveIndex(c, s.withPanelHeader(index))
+}
+
+// headerEventsScript records the console header's events from the first
+// moment, before the app's own code has run, into window.__panelHeader. The
+// header may draw before the app starts listening, and an event missed then
+// would leave the app waiting out its fallback timer for nothing. A failure to
+// load the bundle at all counts as "failed".
+const headerEventsScript = `(function(){var s=window.__panelHeader={state:"pending"};` +
+	`addEventListener("snappcloud-header:ready",function(){s.state="ready"},true);` +
+	`addEventListener("snappcloud-header:failed",function(){if(s.state!=="ready")s.state="failed"},true);` +
+	`addEventListener("error",function(e){var t=e.target;if(t&&t.hasAttribute&&t.hasAttribute("data-panel-header")&&s.state!=="ready")s.state="failed"},true)})();`
+
+var bodyOpenTag = regexp.MustCompile(`(?i)<body[^>]*>`)
+
+// withPanelHeader embeds the console's header in index.html (proposal 015 §5):
+// the header bundle in <head>, and its element first in <body>. Both carry the
+// response's nonce placeholder, which serveIndex fills in like the build's own.
+// A page without the tags it needs is returned unchanged.
+func (s *Server) withPanelHeader(index []byte) []byte {
+	head := bytes.Index(index, []byte("</head>"))
+	body := bodyOpenTag.FindIndex(index)
+	if head < 0 || body == nil || body[0] < head {
+		return index
+	}
+	p := s.Config.Panel.WithDefaults()
+	nonce := cspNoncePlaceholder
+	scripts := `<script nonce="` + nonce + `">` + headerEventsScript + `</script>` +
+		`<script src="` + html.EscapeString(p.HeaderScript) + `" nonce="` + nonce + `" data-panel-header defer></script>`
+	element := `<snappcloud-header app="` + html.EscapeString(p.AppKey) + `"></snappcloud-header>`
+
+	out := make([]byte, 0, len(index)+len(scripts)+len(element))
+	out = append(out, index[:head]...)
+	out = append(out, scripts...)
+	out = append(out, index[head:body[1]]...)
+	out = append(out, element...)
+	return append(out, index[body[1]:]...)
 }
 
 var noAccessPage = template.Must(template.New("no-access").Parse(`<!doctype html>
@@ -311,6 +352,7 @@ var noAccessPage = template.Must(template.New("no-access").Parse(`<!doctype html
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
+{{if .HeaderScript}}<script src="{{.HeaderScript}}" nonce="{{.Nonce}}" defer></script>{{end}}
 <style>
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#1f2328;background:#f6f8fa}
 main{max-width:34rem;margin:18vh auto 0;padding:0 1rem}
@@ -321,6 +363,7 @@ a{color:#0969da}
 </style>
 </head>
 <body>
+{{if .HeaderScript}}<snappcloud-header app="{{.AppKey}}"></snappcloud-header>{{end}}
 <main>
 <h1>{{.Title}}</h1>
 <p>{{.Message}}</p>
@@ -331,15 +374,20 @@ a{color:#0969da}
 `))
 
 // renderNoAccess is the page a refused person sees. It is the panel's own
-// minimal page rather than the SPA, so a refused person never loads the app.
+// minimal page rather than the SPA, so a refused person never loads the app;
+// it keeps the console's header, so they can still reach the apps they may.
 func (s *Server) renderNoAccess(c echo.Context, verdict viewVerdict) error {
+	p := s.Config.Panel.WithDefaults()
 	data := struct {
-		Title, Message, HomeURL, SignOutURL string
+		Title, Message, HomeURL, SignOutURL, HeaderScript, AppKey, Nonce string
 	}{
-		Title:      "No access",
-		Message:    "You do not have access to this app. Ask its owners for access, or open another app.",
-		HomeURL:    s.Config.Panel.HomeURL,
-		SignOutURL: s.Config.Panel.SignOutURL,
+		Title:        "No access",
+		Message:      "You do not have access to this app. Ask its owners for access, or open another app.",
+		HomeURL:      p.HomeURL,
+		SignOutURL:   p.SignOutURL,
+		HeaderScript: p.HeaderScript,
+		AppKey:       p.AppKey,
+		Nonce:        cspNonce(c),
 	}
 	if verdict == viewUnknown {
 		data.Message = "Your access to this app cannot be checked right now. Try again in a few minutes."

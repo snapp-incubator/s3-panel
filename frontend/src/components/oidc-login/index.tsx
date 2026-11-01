@@ -1,11 +1,28 @@
 import { useSearch } from '@tanstack/react-router'
 import { LogIn } from 'lucide-react'
+import { useEffect } from 'react'
 
 import { Button } from '@/components/shadcn/button'
 import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
 import { panelLoginUrl } from '@/lib/basePath'
+import { storageKey } from '@/lib/storageKey'
 import type { ISignInSearch } from '@/router/search'
+
+const AUTO_SIGN_IN_MS = 30_000
+
+/** Reports whether an automatic sign-in may start now, and records that it did. */
+const claimAutoSignIn = (): boolean => {
+  const key = storageKey('panel-auto-sign-in')
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(key) ?? 0) < AUTO_SIGN_IN_MS)
+      return false
+    sessionStorage.setItem(key, String(Date.now()))
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * The sign-in prompt for `iam` mode.
@@ -16,7 +33,17 @@ import type { ISignInSearch } from '@/router/search'
  */
 const OIDCLogin = () => {
   const loginUrl = usePanelSession(state => state.loginUrl)
+  const inConsole = usePanelSession(state => state.panel !== null)
   const { next } = useSearch({ strict: false }) as ISignInSearch
+
+  // Part of a console, the person signed in once for every app: going straight
+  // to the provider is a silent round trip while that sign-in lives. Once per
+  // AUTO_SIGN_IN_MS, so a sign-in that does not stick (a cookie the browser
+  // refuses, say) leaves the button here instead of looping.
+  useEffect(() => {
+    if (inConsole && claimAutoSignIn())
+      window.location.href = panelLoginUrl(loginUrl, next)
+  }, [inConsole, loginUrl, next])
 
   return (
     <div className="flex w-full flex-col items-center gap-6 py-12">
