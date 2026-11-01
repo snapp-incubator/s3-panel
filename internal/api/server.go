@@ -50,6 +50,10 @@ func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Co
 		logger:     logger,
 	}
 
+	if err := cfg.Server.ValidateBasePath(); err != nil {
+		return nil, err
+	}
+
 	if err := s.buildRegionTargets(); err != nil {
 		return nil, err
 	}
@@ -90,6 +94,7 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 		return fmt.Errorf("iam auth mode: %w", err)
 	}
 	s.auth = authenticator
+	s.auth.BasePath = s.Config.Server.Base()
 
 	controlClient, err := control.New(s.Config.ObjectStorage.ControlURL, s.Config.ObjectStorage.STSURL, 0)
 	if err != nil {
@@ -169,7 +174,7 @@ func (s *Server) registerRouter() {
 	// Before anything that can change state, the login endpoints included.
 	newRouter.Use(s.refuseCrossOrigin())
 	if s.Config.Server.ServeFrontend {
-		newRouter.Use(frontendMiddleware())
+		newRouter.Use(frontendMiddleware(s.Config.Server.Base()))
 		s.logger.Info("### Serving embedded frontend ###")
 	} else {
 		s.logger.Info("### Frontend serving disabled (API-only) ###")
@@ -178,18 +183,27 @@ func (s *Server) registerRouter() {
 }
 
 func (s *Server) registerRoutes() {
+	// Everything the panel serves lives under its base path ("" at the host's
+	// root), so requests reach it with the prefix still on.
+	base := s.Router.Group(s.Config.Server.Base())
+
+	// /health stays at the root too, where an orchestrator's probe finds it
+	// whatever prefix the panel is published under.
 	s.Router.GET("/health", health.HandleHealth)
-	s.Router.GET("/docs/*", echoSwagger.WrapHandler)
+	if s.Config.Server.Base() != "" {
+		base.GET("/health", health.HandleHealth)
+	}
+	base.GET("/docs/*", echoSwagger.WrapHandler)
 
 	// How the SPA learns which login flow to present.
-	s.Router.GET("/api/config", s.HandleConfig())
-	s.Router.GET("/s3/api/config", s.HandleConfig())
+	base.GET("/api/config", s.HandleConfig())
+	base.GET("/s3/api/config", s.HandleConfig())
 
 	// Login endpoints live OUTSIDE the API group: that group carries the static
 	// bearer-token middleware, which would reject the identity provider's
 	// callback (it arrives with no Authorization header and cannot be given one).
 	if s.auth != nil {
-		s.auth.RegisterRoutes(s.Router)
+		s.auth.RegisterRoutes(base)
 	}
 
 	// Serve the API under both /api and /s3/api. The bundled frontend calls
@@ -216,7 +230,7 @@ func (s *Server) registerAPIGroup(prefix string) {
 	//
 	// requireJSONBody keeps HTML forms off every JSON route; only uploads take a
 	// multipart body.
-	apiRoutes := s.Router.Group(prefix, s.CORSMiddleware(), requireJSONBody("/object/upload"), guard, s.actAsContext(), s.stripClientCredentials())
+	apiRoutes := s.Router.Group(s.Config.Server.Base()+prefix, s.CORSMiddleware(), requireJSONBody("/object/upload"), guard, s.actAsContext(), s.stripClientCredentials())
 
 	// A single gate in front of everything that could change the storage
 	// backend. It outranks the permission checks below on purpose: holding

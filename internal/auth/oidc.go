@@ -48,6 +48,12 @@ type Authenticator struct {
 	// Logger reports a failed ResolveAdmin; nil is silent.
 	Logger *zap.Logger
 
+	// BasePath is the path prefix the panel is served under ("" or "/a/b", as
+	// config.ServerConfig.Base returns it). It scopes every cookie this
+	// authenticator sets or clears, and keeps the post-login landing under the
+	// panel. Set it before serving.
+	BasePath string
+
 	// Collapses concurrent and near-concurrent access-token refreshes, so one
 	// refresh token is never redeemed twice. See refreshShared.
 	refreshGroupFields
@@ -97,12 +103,19 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Authenticator, error) {
 	}, nil
 }
 
+// Router is where the login endpoints are mounted: the echo instance itself, or
+// a group carrying the panel's base path.
+type Router interface {
+	GET(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	POST(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+}
+
 // RegisterRoutes mounts the login endpoints.
 //
 // They sit OUTSIDE the API group on purpose: that group carries the static
 // bearer-token middleware, which would reject the provider's callback (it
 // arrives with no Authorization header and cannot be given one).
-func (a *Authenticator) RegisterRoutes(e *echo.Echo) {
+func (a *Authenticator) RegisterRoutes(e Router) {
 	e.GET("/auth/login", a.Login)
 	e.GET("/auth/callback", a.Callback)
 	// POST only: signing out revokes storage credentials, and a GET can be
@@ -131,7 +144,7 @@ func (a *Authenticator) Login(c echo.Context) error {
 func (a *Authenticator) Callback(c echo.Context) error {
 	stateCookie, err := c.Cookie(stateCookieName)
 	if err != nil || stateCookie.Value == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "login state is missing or expired; start again at /auth/login")
+		return echo.NewHTTPError(http.StatusBadRequest, "login state is missing or expired; start again at "+a.BasePath+"/auth/login")
 	}
 	// Clear it immediately: a state is single-use, and leaving it set would let a
 	// replayed callback reuse it.
@@ -174,12 +187,27 @@ func (a *Authenticator) Callback(c echo.Context) error {
 	if err := a.Save(c, session); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not persist the session")
 	}
+	a.expireLegacyCookies(c, stateCookieName)
 
+	return c.Redirect(http.StatusFound, a.postLoginRedirect())
+}
+
+// postLoginRedirect is where a completed sign-in lands. A root-relative
+// setting is taken as relative to the panel, so the default "/" lands on the
+// panel's own home under a base path rather than on whatever owns the host's
+// root. A value already under the base, or an absolute URL, is used as is.
+func (a *Authenticator) postLoginRedirect() string {
 	redirect := a.cfg.PostLoginRedirect
 	if redirect == "" {
 		redirect = "/"
 	}
-	return c.Redirect(http.StatusFound, redirect)
+	if a.BasePath == "" || !strings.HasPrefix(redirect, "/") || strings.HasPrefix(redirect, "//") {
+		return redirect
+	}
+	if redirect == a.BasePath || strings.HasPrefix(redirect, a.BasePath+"/") {
+		return redirect
+	}
+	return a.BasePath + redirect
 }
 
 // Logout clears the session cookie. It does not end the session at the provider:
@@ -198,6 +226,7 @@ func (a *Authenticator) Logout(c echo.Context) error {
 		}
 	}
 	a.clearCookie(c, a.cookieName())
+	a.expireLegacyCookies(c)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -374,11 +403,22 @@ func (a *Authenticator) groupsClaim() string {
 	return config.DefaultGroupsClaim
 }
 
+// cookiePath scopes every cookie to the panel's own path, so a browser sends
+// none of them to the other apps sharing its host. It is the same value
+// everywhere a cookie is set or cleared: a clear with another Path leaves the
+// cookie in place, and sign-out would silently keep the session.
+func (a *Authenticator) cookiePath() string {
+	if a.BasePath == "" {
+		return "/"
+	}
+	return a.BasePath
+}
+
 func (a *Authenticator) setCookie(c echo.Context, name, value string, ttl time.Duration) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    value,
-		Path:     "/",
+		Path:     a.cookiePath(),
 		HttpOnly: true, // the SPA never needs to read it, and script access is how session cookies leak
 		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode, // Lax, not Strict: the provider redirect is a cross-site GET
@@ -388,16 +428,38 @@ func (a *Authenticator) setCookie(c echo.Context, name, value string, ttl time.D
 }
 
 func (a *Authenticator) clearCookie(c echo.Context, name string) {
+	a.clearCookieAt(c, name, a.cookiePath())
+}
+
+func (a *Authenticator) clearCookieAt(c echo.Context, name, path string) {
 	c.SetCookie(&http.Cookie{
 		Name:     name,
 		Value:    "",
-		Path:     "/",
+		Path:     path,
 		HttpOnly: true,
 		Secure:   a.cfg.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Unix(0, 0),
 		MaxAge:   -1,
 	})
+}
+
+// expireLegacyCookies clears the session cookie a panel served at the host's
+// root left behind, once the panel has moved under a base path.
+//
+// That cookie has Path=/, so it would otherwise ride along on every request to
+// every app on the host for the rest of its lifetime (12 hours by default) —
+// exactly what scoping the cookie to the base path is meant to stop. Both the
+// configured name and the default are cleared, since a move under a base path
+// usually renames the cookie too. A no-op at the root, where Path=/ is the
+// current cookie.
+func (a *Authenticator) expireLegacyCookies(c echo.Context, extra ...string) {
+	if a.BasePath == "" {
+		return
+	}
+	for _, name := range dedupe(append([]string{a.cookieName(), config.DefaultCookieName}, extra...)) {
+		a.clearCookieAt(c, name, "/")
+	}
 }
 
 func randomToken() (string, error) {

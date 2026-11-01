@@ -1,4 +1,5 @@
 import { basePath } from '@/lib/basePath'
+import { storageKey } from '@/lib/storageKey'
 import { BaseHeaders } from './config'
 import {
   type FetchError,
@@ -29,7 +30,8 @@ const config = {
   // An explicit backend URL wins; otherwise requests go to the panel's own
   // backend, under whatever prefix the panel is served at.
   baseUrl: (import.meta.env.VITE_CENTRAL_BACKEND_API as string) || basePath,
-  currentRegion: (localStorage.getItem('currentRegion') as Region) || 'teh-1',
+  currentRegion:
+    (localStorage.getItem(storageKey('currentRegion')) as Region) || 'teh-1',
   defaultHeaders: BaseHeaders()
 }
 
@@ -39,7 +41,7 @@ export const updateRegion = (
 ) => {
   config.currentRegion = region
   config.defaultHeaders.region = region
-  localStorage.setItem('currentRegion', region)
+  localStorage.setItem(storageKey('currentRegion'), region)
 
   if (extraHeaders) Object.assign(config.defaultHeaders, extraHeaders)
 }

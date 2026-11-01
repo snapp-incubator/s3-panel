@@ -3,7 +3,7 @@ import { LogIn } from 'lucide-react'
 import { Button } from '@/components/shadcn/button'
 import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
-import { withBase } from '@/lib/basePath'
+import { panelLoginUrl } from '@/lib/basePath'
 
 /**
  * The sign-in prompt for `iam` mode.
@@ -30,9 +30,7 @@ const OIDCLogin = () => {
         // A full navigation, not fetch: the provider responds with redirects and
         // sets cookies on its own origin, neither of which survives an XHR.
         onClick={() => {
-          // The backend reports a root-relative path; it is the panel's own
-          // /auth/login, so it takes the panel's prefix.
-          window.location.href = withBase(loginUrl || '/auth/login')
+          window.location.href = panelLoginUrl(loginUrl)
         }}
       >
         <LogIn className="mr-2 size-4" />

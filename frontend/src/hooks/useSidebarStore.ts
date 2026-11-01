@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { storageKey } from '@/lib/storageKey'
 
 interface SidebarState {
   isOpen: boolean
@@ -13,7 +14,7 @@ export const useSidebarStore = create<SidebarState>()(
       toggle: () => set(state => ({ isOpen: !state.isOpen }))
     }),
     {
-      name: 'sidebar-storage'
+      name: storageKey('sidebar-storage')
     }
   )
 )

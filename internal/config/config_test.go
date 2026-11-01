@@ -38,3 +38,29 @@ url = "https://s3.teh-1.snappcloud.io"
 		t.Fatalf("serve_frontend: got false, want true")
 	}
 }
+
+func TestBasePathNormalises(t *testing.T) {
+	for in, want := range map[string]string{
+		"":           "",
+		"/":          "",
+		"  ":         "",
+		"storage":    "/storage",
+		"/storage":   "/storage",
+		"/storage/":  "/storage",
+		"//storage/": "/storage",
+		"/a/b/":      "/a/b",
+	} {
+		s := ServerConfig{BasePath: in}
+		if got := s.Base(); got != want {
+			t.Errorf("Base(%q) = %q, want %q", in, got, want)
+		}
+		if err := s.ValidateBasePath(); err != nil {
+			t.Errorf("ValidateBasePath(%q) = %v, want nil", in, err)
+		}
+	}
+	for _, bad := range []string{"/a/../b", "/a//b", "/a/./b", "/st orage", "/st%2forage", "/a?b", "/a#b", `/a\b`} {
+		if err := (ServerConfig{BasePath: bad}).ValidateBasePath(); err == nil {
+			t.Errorf("ValidateBasePath(%q) = nil, want an error", bad)
+		}
+	}
+}
