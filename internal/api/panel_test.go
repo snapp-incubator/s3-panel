@@ -360,3 +360,72 @@ func TestPanelOffChangesNothing(t *testing.T) {
 		t.Errorf("/api/config mentions the panel while it is off: %s", body)
 	}
 }
+
+// TestPagesEmbedTheConsoleHeader (proposal 015 §5): with the panel on, the
+// header bundle loads from the console's path under this response's nonce, and
+// its element comes first in <body>. Off, the page is the build's own.
+func TestPagesEmbedTheConsoleHeader(t *testing.T) {
+	s, _ := actAsServer(t)
+	s.Config.Panel = config.PanelConfig{Enabled: true}.WithDefaults()
+	s.view = newViewGate((&console{view: map[string]bool{}}).ask)
+
+	e := echo.New()
+	e.Use(securityHeaders())
+	e.Use(spaMiddleware(builtFrontend, "", s.renderPage))
+	rec := serve(e, httptest.NewRequest(http.MethodGet, "/object-storage/s3-bucket", nil))
+	body := rec.Body.String()
+
+	csp := rec.Header().Get("Content-Security-Policy-Report-Only")
+	_, after, _ := strings.Cut(csp, "'nonce-")
+	nonce, _, _ := strings.Cut(after, "'")
+	if !strings.Contains(body, `<script src="/panel/header/v1/header.js" nonce="`+nonce+`" data-panel-header defer></script>`) {
+		t.Errorf("header bundle missing or without the response nonce:\n%s", body)
+	}
+	if strings.Count(body, `nonce="`+nonce+`"`) != 3 {
+		t.Errorf("want the app's script, the event recorder and the header bundle under the nonce:\n%s", body)
+	}
+	if !strings.Contains(body, `<body><snappcloud-header app="storage"></snappcloud-header><div id="root">`) {
+		t.Errorf("header element is not first in <body>:\n%s", body)
+	}
+	if strings.Index(body, "header.js") > strings.Index(body, "</head>") {
+		t.Errorf("header bundle is outside <head>")
+	}
+
+	// Off: the page is untouched.
+	s.view = nil
+	plain := serve(e, httptest.NewRequest(http.MethodGet, "/", nil))
+	if strings.Contains(plain.Body.String(), "snappcloud-header") || strings.Contains(plain.Body.String(), "__panelHeader") {
+		t.Errorf("panel off, page still embeds the header:\n%s", plain.Body.String())
+	}
+}
+
+func TestNoAccessPageKeepsTheHeader(t *testing.T) {
+	s, _ := actAsServer(t)
+	s.Config.Panel = config.PanelConfig{Enabled: true, AppKey: "storage"}.WithDefaults()
+	s.view = newViewGate((&console{view: map[string]bool{"u-bob": false}}).ask)
+
+	e := echo.New()
+	e.Use(securityHeaders())
+	e.Use(spaMiddleware(builtFrontend, "", s.renderPage))
+	rec := serve(e, signedInRequest(t, s.auth, "/", "u-bob"))
+	body := rec.Body.String()
+	if rec.Code != http.StatusForbidden || !strings.Contains(body, `<snappcloud-header app="storage">`) || !strings.Contains(body, `src="/panel/header/v1/header.js" nonce="`) {
+		t.Errorf("No access page without the console header (%d):\n%s", rec.Code, body)
+	}
+	if strings.Contains(body, cspNoncePlaceholder) || strings.Contains(body, `nonce=""`) {
+		t.Errorf("No access page carries no real nonce:\n%s", body)
+	}
+}
+
+func TestWithPanelHeaderLeavesOddPagesAlone(t *testing.T) {
+	s := &Server{Config: config.Config{Panel: config.PanelConfig{Enabled: true}}}
+	for _, page := range []string{"<p>no head or body</p>", "<html><body></body><head></head></html>"} {
+		if got := string(s.withPanelHeader([]byte(page))); got != page {
+			t.Errorf("rewrote %q into %q", page, got)
+		}
+	}
+	got := string(s.withPanelHeader([]byte(`<html><head></head><BODY class="x"><div></div></BODY></html>`)))
+	if !strings.Contains(got, `<BODY class="x"><snappcloud-header`) {
+		t.Errorf("did not place the element after a body tag with attributes: %s", got)
+	}
+}

@@ -233,5 +233,6 @@
   "acting_as_hint": "you see only what this debug user can reach, and credentials are minted for them.",
   "stop_acting": "Stop acting",
   "no_debug_users": "No debug users — create one in IAM",
-  "act_as_failed": "Could not switch identity"
+  "act_as_failed": "Could not switch identity",
+  "app_name": "Object Storage"
 }
