@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -35,6 +36,10 @@ func TestRoutesLiveUnderTheBasePath(t *testing.T) {
 		"/storage/api/regions":     http.StatusOK,
 		"/storage/health":          http.StatusOK,
 		"/health":                  http.StatusOK,
+		"/storage/livez":           http.StatusOK,
+		"/storage/readyz":          http.StatusOK,
+		"/livez":                   http.StatusOK,
+		"/readyz":                  http.StatusOK,
 		"/api/config":              http.StatusNotFound,
 		"/s3/api/regions":          http.StatusNotFound,
 		"/storagex/api/config":     http.StatusNotFound,
@@ -97,5 +102,27 @@ func TestInvalidBasePathRefusesToStart(t *testing.T) {
 	cfg.Server.BasePath = "/a/../b"
 	if _, err := NewServer(t.Context(), func() {}, cfg, zap.NewNop()); err == nil {
 		t.Fatal("NewServer accepted a base path with ..")
+	}
+}
+
+// TestHealthIsNotTheSPA: with the frontend served, livez and readyz must reach
+// their handlers rather than fall back to index.html, or a prober would read
+// the app's HTML as "healthy".
+func TestHealthIsNotTheSPA(t *testing.T) {
+	for _, base := range []string{"", "/storage"} {
+		cfg := config.DefaultConfig()
+		cfg.Server.BasePath = base
+		s := &Server{Config: cfg, logger: zap.NewNop()}
+		s.registerRouter()
+		s.registerRoutes()
+
+		rec := serve(s.Router, httptest.NewRequest(http.MethodGet, base+"/livez", nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != "ok" {
+			t.Errorf("base %q: livez = %d %q", base, rec.Code, rec.Body.String())
+		}
+		rec = serve(s.Router, httptest.NewRequest(http.MethodGet, base+"/readyz", nil))
+		if !strings.HasPrefix(rec.Header().Get("Content-Type"), "application/json") || !strings.Contains(rec.Body.String(), `"status":"ok"`) {
+			t.Errorf("base %q: readyz = %d %q", base, rec.Code, rec.Body.String())
+		}
 	}
 }

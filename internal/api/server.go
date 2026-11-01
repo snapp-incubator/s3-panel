@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -40,6 +41,9 @@ type Server struct {
 	auth        *auth.Authenticator
 	control     *control.Client
 	credentials *credentialCache
+
+	// readiness answers readyz from this mode's dependencies.
+	readiness *health.Readiness
 }
 
 func NewServer(ctx context.Context, cancelFunc context.CancelFunc, cfg config.Config, logger *zap.Logger) (*Server, error) {
@@ -187,11 +191,17 @@ func (s *Server) registerRoutes() {
 	// root), so requests reach it with the prefix still on.
 	base := s.Router.Group(s.Config.Server.Base())
 
-	// /health stays at the root too, where an orchestrator's probe finds it
-	// whatever prefix the panel is published under.
-	s.Router.GET("/health", health.HandleHealth)
-	if s.Config.Server.Base() != "" {
-		base.GET("/health", health.HandleHealth)
+	// livez and readyz are what a status page probes, through the public route
+	// and so under the base path. They, and the older /health, also stay at the
+	// root, where an orchestrator's probe finds them whatever prefix the panel
+	// is published under.
+	if s.readiness == nil {
+		s.registerReadiness()
+	}
+	for _, g := range s.healthRouters(base) {
+		g.GET("/health", health.HandleHealth)
+		g.GET("/livez", health.HandleLive)
+		g.GET("/readyz", s.readiness.Handle)
 	}
 	base.GET("/docs/*", echoSwagger.WrapHandler)
 
@@ -211,6 +221,45 @@ func (s *Server) registerRoutes() {
 	// clients and the swagger docs use /api.
 	s.registerAPIGroup("/api")
 	s.registerAPIGroup("/s3/api")
+}
+
+// healthRouters is where the health endpoints are mounted: the root, and the
+// base path when there is one.
+func (s *Server) healthRouters(base *echo.Group) []auth.Router {
+	if s.Config.Server.Base() == "" {
+		return []auth.Router{s.Router}
+	}
+	return []auth.Router{s.Router, base}
+}
+
+// registerReadiness picks what readyz reports on for the active mode.
+//
+// In iam mode IAM is critical: it authorizes every request, so without it the
+// panel serves no one. Sign-in and the gateway only degrade it — signed-in
+// people keep browsing while Keycloak is away, and bucket lists still come
+// from IAM while the gateway is. In s3 mode the gateway is all there is.
+func (s *Server) registerReadiness() {
+	var checks []health.Check
+	add := func(name string, critical bool, probe func(context.Context) error) {
+		checks = append(checks, health.Check{Name: name, Critical: critical, Probe: probe})
+	}
+	gateway := strings.TrimSpace(s.Config.ObjectStorage.URL)
+	if s.Config.Server.IsIAMMode() {
+		add("iam", true, health.ReachableProbe(strings.TrimSpace(s.Config.ObjectStorage.ControlURL)))
+		issuer := strings.TrimRight(strings.TrimSpace(s.Config.OIDC.IssuerURL), "/")
+		add("oidc", false, health.OKProbe(issuer+"/.well-known/openid-configuration"))
+		if gateway != "" {
+			add("gateway", false, health.ReachableProbe(gateway))
+		}
+	} else if gateway != "" {
+		add("gateway", true, health.ReachableProbe(gateway))
+	}
+	s.readiness = health.NewReadiness(checks, health.DefaultReadyTTL, 0)
+	s.readiness.OnFailure = func(name string, err error) {
+		if s.logger != nil {
+			s.logger.Warn("readiness check failed", zap.String("check", name), zap.Error(err))
+		}
+	}
 }
 
 func (s *Server) registerAPIGroup(prefix string) {
