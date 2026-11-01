@@ -1,0 +1,31 @@
+{{- /* An HTTPProxy with no virtualhost, for another chart's root HTTPProxy to
+       include: the panel mounted at a path of a host it shares with other apps
+       (a unified console). The root's include names it and supplies the prefix
+       condition; this proxy only says where the panel's pods are.
+
+       The prefix is NOT stripped here: with config.base_path set, the panel
+       serves under that prefix itself, so the include's prefix and base_path
+       must be the same path. */}}
+{{- if and .Values.enabled (dig "include" "enabled" false .Values.httpproxy) }}
+{{- if not .Values.config.base_path }}
+{{- fail "httpproxy.include.enabled needs config.base_path: the panel must serve under the prefix the including proxy routes to it" }}
+{{- end }}
+apiVersion: projectcontour.io/v1
+kind: HTTPProxy
+metadata:
+  name: {{ .Values.httpproxy.include.name | default (printf "%s-include" (include "snappobjectstore.name" .)) }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ingressClassName: {{ .Values.httpproxy.ingressClassName | default "private" }}
+  routes:
+  - enableWebsockets: true
+    loadBalancerPolicy:
+      strategy: RoundRobin
+    services:
+    - name: {{ include "snappobjectstore.name" . }}-service
+      port: {{ .Values.config.port }}
+      weight: 100
+    timeoutPolicy:
+      idleConnection: 15s
+      response: 30s
+{{- end }}

@@ -56,6 +56,48 @@ snapp-object-store:
     # from control_url, which may be an in-cluster address. Empty hides the link.
     iam_console_url: ""
 
+    # Serve the whole panel (SPA, API, sign-in, livez/readyz) under this path
+    # prefix of its host, e.g. "/storage" on a host shared with other apps. The
+    # image must be built with the same VITE_BASE_PATH, oidc.redirect_url must
+    # point at <host><base_path>/auth/callback, and nothing in front may strip
+    # the prefix: this chart's HTTPProxies route it through unchanged. Empty
+    # serves the panel at the host's root.
+    base_path: ""
+    # Origins besides the panel's own that may send it state-changing requests.
+    # Its own host, and requests with no Origin (scripts), are always accepted.
+    trusted_origins: []
+
+    # --- A unified console (optional, off by default) ------------------------
+    #
+    # Join a console serving several apps on one host, each at its own path
+    # (base_path above), with one sign-in and a shared header. Requires
+    # auth_mode "iam". The app credential (app_…) is a secret: put it in
+    # `existingSecret` as s3panel_panel__api_key.
+    panel:
+      enabled: false
+      # The key the console admitted this app under.
+      app_key: "storage"
+      # The console's JSON API base. Empty defaults to iam_api_url (or its
+      # default).
+      api_url: ""
+      description: ""
+      # Defaults: /panel/header/v1/header.js, "/" and "/signout".
+      header_script: ""
+      home_url: ""
+      signout_url: ""
+      # How often the manifest is registered again. Default 6h.
+      register_interval: ""
+      # Navigation in the console header; paths under base_path. Empty
+      # defaults to the bucket list.
+      nav: []
+      #  - label: Buckets
+      #    path: /storage/object-storage/s3-bucket/buckets
+      # How the console opens catalog resources here. Each resource pattern
+      # must be one the app was admitted for.
+      links: []
+      #  - resource: "ceph-*|bucket"
+      #    path: "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"
+
     oidc:
       issuer_url: ""
       client_id: ""
@@ -74,6 +116,7 @@ snapp-object-store:
       # Secret carrying:
       #   s3panel_oidc__client_secret   (omit for a public OIDC client)
       #   s3panel_oidc__cookie_key      (REQUIRED; openssl rand -base64 32)
+      #   s3panel_panel__api_key        (when panel.enabled; the app credential)
 
 # Creates the object-store-gitlab-ci ServiceAccount and binds it to
 # registry-editor, so CI can push panel images into this namespace. The panel
