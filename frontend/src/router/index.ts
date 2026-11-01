@@ -6,7 +6,8 @@ import { rootRoute } from './root'
 import {
   parseBucketDetailSearch,
   parseBucketObjectsSearch,
-  parseBucketsSearch
+  parseBucketsSearch,
+  parseSignInSearch
 } from './search'
 
 const S3BucketPage = lazy(() => import('@/pages/objectStorage/s3Bucket'))
@@ -30,6 +31,7 @@ export const s3BucketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/object-storage/s3-bucket',
   component: S3BucketPage,
+  validateSearch: parseSignInSearch,
   beforeLoad: () =>
     handleAuthRedirect('/object-storage/s3-bucket/buckets', false)
 })
@@ -39,7 +41,8 @@ export const BucketsRoute = createRoute({
   path: '/object-storage/s3-bucket/buckets',
   component: BucketsPage,
   validateSearch: parseBucketsSearch,
-  beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
+  beforeLoad: ({ location }) =>
+    handleAuthRedirect('/object-storage/s3-bucket', true, location)
 })
 
 export const BucketObjectsRoute = createRoute({
@@ -47,7 +50,8 @@ export const BucketObjectsRoute = createRoute({
   path: '/object-storage/s3-bucket/buckets/$bucketName',
   component: BucketObjectsPage,
   validateSearch: parseBucketObjectsSearch,
-  beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
+  beforeLoad: ({ location }) =>
+    handleAuthRedirect('/object-storage/s3-bucket', true, location)
 })
 
 // Bucket detail is iam-mode only: the object count, size and policy it shows
@@ -57,7 +61,8 @@ export const BucketDetailRoute = createRoute({
   path: '/object-storage/s3-bucket/buckets/$bucketName/detail',
   component: BucketDetailPage,
   validateSearch: parseBucketDetailSearch,
-  beforeLoad: () => handleAuthRedirect('/object-storage/s3-bucket')
+  beforeLoad: ({ location }) =>
+    handleAuthRedirect('/object-storage/s3-bucket', true, location)
 })
 
 const routeTree = rootRoute.addChildren([

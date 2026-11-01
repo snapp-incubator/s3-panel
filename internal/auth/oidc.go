@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 	"time"
 
@@ -126,6 +128,12 @@ func (a *Authenticator) RegisterRoutes(e Router) {
 }
 
 // Login starts the authorization-code flow.
+//
+// ?next= names where the person was going, so a link into the panel survives
+// the round trip through the provider. It is kept only if it is a relative
+// path under the panel (SafeReturnPath); anything else is dropped and the
+// sign-in lands on the usual page. It travels in the state cookie, which the
+// browser holds and the provider never sees.
 func (a *Authenticator) Login(c echo.Context) error {
 	state, err := randomToken()
 	if err != nil {
@@ -136,7 +144,11 @@ func (a *Authenticator) Login(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not start login")
 	}
 
-	a.setCookie(c, stateCookieName, state+"."+nonce, stateTTL)
+	value := state + "." + nonce
+	if next := a.SafeReturnPath(c.QueryParam("next")); next != "" {
+		value += "." + base64.RawURLEncoding.EncodeToString([]byte(next))
+	}
+	a.setCookie(c, stateCookieName, value, stateTTL)
 
 	return c.Redirect(http.StatusFound, a.oauth.AuthCodeURL(state, oidc.Nonce(nonce)))
 }
@@ -151,9 +163,17 @@ func (a *Authenticator) Callback(c echo.Context) error {
 	// replayed callback reuse it.
 	a.clearCookie(c, stateCookieName)
 
-	expectedState, expectedNonce, ok := strings.Cut(stateCookie.Value, ".")
-	if !ok {
+	parts := strings.Split(stateCookie.Value, ".")
+	if len(parts) < 2 || len(parts) > 3 {
 		return echo.NewHTTPError(http.StatusBadRequest, "login state is malformed")
+	}
+	expectedState, expectedNonce := parts[0], parts[1]
+	next := ""
+	if len(parts) == 3 {
+		if raw, err := base64.RawURLEncoding.DecodeString(parts[2]); err == nil {
+			// Checked again: the cookie is the browser's to edit.
+			next = a.SafeReturnPath(string(raw))
+		}
 	}
 	if c.QueryParam("state") != expectedState {
 		return echo.NewHTTPError(http.StatusBadRequest, "login state does not match")
@@ -190,7 +210,55 @@ func (a *Authenticator) Callback(c echo.Context) error {
 	}
 	a.expireLegacyCookies(c, stateCookieName)
 
+	if next != "" {
+		return c.Redirect(http.StatusFound, next)
+	}
 	return c.Redirect(http.StatusFound, a.postLoginRedirect())
+}
+
+// maxReturnPath bounds ?next=, which rides in a cookie.
+const maxReturnPath = 1024
+
+// SafeReturnPath returns next as a path and query under the panel's base path,
+// or "" when it is anything else.
+//
+// What it refuses is what turns a return path into an open redirect or a hop
+// into another app on a shared host: a scheme or host ("https://evil",
+// "//evil", "/\evil"), a path outside the base ("/iam/…" from "/storage"),
+// dot segments or doubled slashes that would resolve outside it, encoded or
+// not, control characters, and the sign-in endpoints themselves, which would
+// loop. The fragment is dropped; the browser keeps its own.
+func (a *Authenticator) SafeReturnPath(next string) string {
+	if next == "" || len(next) > maxReturnPath || !strings.HasPrefix(next, "/") ||
+		strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\") {
+		return ""
+	}
+	for _, r := range next {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || u.Opaque != "" {
+		return ""
+	}
+	// Clean resolves "." and ".." and collapses "//"; any difference means the
+	// path said something other than what it looks like.
+	if cleaned := path.Clean(u.Path); cleaned != strings.TrimSuffix(u.Path, "/") && cleaned != u.Path {
+		return ""
+	}
+	if strings.Contains(u.Path, "//") {
+		return ""
+	}
+	base := a.BasePath
+	if base != "" && u.Path != base && !strings.HasPrefix(u.Path, base+"/") {
+		return ""
+	}
+	if u.Path == base+"/auth" || strings.HasPrefix(u.Path, base+"/auth/") {
+		return ""
+	}
+	out := &url.URL{Path: u.Path, RawPath: u.RawPath, RawQuery: u.RawQuery}
+	return out.String()
 }
 
 // postLoginRedirect is where a completed sign-in lands. A root-relative

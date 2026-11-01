@@ -1,9 +1,11 @@
+import { useSearch } from '@tanstack/react-router'
 import { LogIn } from 'lucide-react'
 
 import { Button } from '@/components/shadcn/button'
 import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
 import { panelLoginUrl } from '@/lib/basePath'
+import type { ISignInSearch } from '@/router/search'
 
 /**
  * The sign-in prompt for `iam` mode.
@@ -14,6 +16,7 @@ import { panelLoginUrl } from '@/lib/basePath'
  */
 const OIDCLogin = () => {
   const loginUrl = usePanelSession(state => state.loginUrl)
+  const { next } = useSearch({ strict: false }) as ISignInSearch
 
   return (
     <div className="flex w-full flex-col items-center gap-6 py-12">
@@ -30,7 +33,7 @@ const OIDCLogin = () => {
         // A full navigation, not fetch: the provider responds with redirects and
         // sets cookies on its own origin, neither of which survives an XHR.
         onClick={() => {
-          window.location.href = panelLoginUrl(loginUrl)
+          window.location.href = panelLoginUrl(loginUrl, next)
         }}
       >
         <LogIn className="mr-2 size-4" />

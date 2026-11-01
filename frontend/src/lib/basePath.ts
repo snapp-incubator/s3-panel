@@ -16,12 +16,17 @@ export const withBase = (path: string): string =>
 /**
  * Where the sign-in button sends the browser. The backend reports its login URL
  * with the base path already on; an older backend reports a bare
- * "/auth/login", which takes the prefix here.
+ * "/auth/login", which takes the prefix here. `next` is the page to return to
+ * afterwards.
  */
-export const panelLoginUrl = (loginUrl: string): string => {
+export const panelLoginUrl = (loginUrl: string, next?: string): string => {
   const url = loginUrl || '/auth/login'
+  const login =
+    basePath && (url === basePath || url.startsWith(`${basePath}/`))
+      ? url
+      : withBase(url)
 
-  return basePath && (url === basePath || url.startsWith(`${basePath}/`))
-    ? url
-    : withBase(url)
+  if (!next) return login
+
+  return `${login}${login.includes('?') ? '&' : '?'}next=${encodeURIComponent(next)}`
 }
