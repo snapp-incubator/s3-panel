@@ -34,6 +34,31 @@ func cspNonce(c echo.Context) string {
 // Framing is enforced, not reported: browsers ignore frame-ancestors in a
 // report-only policy, and nothing frames this panel.
 func securityHeaders() echo.MiddlewareFunc {
+	return securityHeadersEnforcing(enforceCSP)
+}
+
+// enforceCSP switches the CSP from report-only to enforced. Flip it only once
+// every page runs clean under it: Swagger UI at /docs loads scripts without a
+// nonce and would render blank.
+const enforceCSP = false
+
+// setCSP writes the policy as enforced or report-only. Enforced, the policy
+// already carries frame-ancestors, so it is the one Content-Security-Policy
+// header; report-only, frame-ancestors also goes out as its own enforced
+// header, because browsers ignore it in a report-only policy. One function
+// for both, so switching modes cannot leave a second h.Set on the same header
+// silently replacing the policy.
+func setCSP(h http.Header, nonce string, enforce bool) {
+	if enforce {
+		h.Del("Content-Security-Policy-Report-Only")
+		h.Set("Content-Security-Policy", contentSecurityPolicy(nonce))
+		return
+	}
+	h.Set("Content-Security-Policy-Report-Only", contentSecurityPolicy(nonce))
+	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+}
+
+func securityHeadersEnforcing(enforce bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			nonce, err := newNonce()
@@ -43,8 +68,7 @@ func securityHeaders() echo.MiddlewareFunc {
 			c.Set(cspNonceKey, nonce)
 
 			h := c.Response().Header()
-			h.Set("Content-Security-Policy-Report-Only", contentSecurityPolicy(nonce))
-			h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+			setCSP(h, nonce, enforce)
 			h.Set("X-Frame-Options", "DENY")
 			h.Set("X-Content-Type-Options", "nosniff")
 			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")

@@ -1,6 +1,5 @@
-import { z } from 'zod'
-
 import { t } from '@/i18n'
+import { z } from '@/lib/zod'
 
 export interface ICreateBucket {
   open: boolean

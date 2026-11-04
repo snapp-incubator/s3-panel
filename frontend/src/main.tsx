@@ -1,5 +1,5 @@
 // First: zod must be configured before any module builds a schema.
-import '@/lib/zodJitless'
+import '@/lib/zod'
 
 import * as Sentry from '@sentry/react'
 import { StrictMode } from 'react'
