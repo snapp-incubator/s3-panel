@@ -1,0 +1,181 @@
+# GitLab CI for SnappCloud's fork of the s3-panel (proposal 015, F-S2).
+#
+# The fork ships its own image into the cluster's internal registry instead of
+# waiting for an upstream release. Upstream CI (.github/workflows) is untouched
+# and still runs on GitHub; this file only does anything on the GitLab mirror.
+#
+# Modelled on the IAM repo's .gitlab-ci.yml: same runner images, the same
+# internal Go and npm proxies, and the same pipe-delimited REGISTRY_TARGETS
+# list, so adding a destination is one more line.
+#
+# Setting up the GitLab side is manual, once:
+#   1. A GitLab project for the fork, mirroring it (pull mirror from the fork,
+#      or push the fork's branches and tags there).
+#   2. CI/CD variable TEH1_STAGING_PUSH_TOKEN in that project: a token for a
+#      ServiceAccount with registry-editor in teh-1's snappcloud-iam namespace
+#      (IAM's own token can be reused; variables are per project). Masked. Leave
+#      it unprotected if MR preview images are wanted, or protect the default
+#      branch and the s3-panel-v* tags if not.
+#   3. Runners with docker:dind, as IAM's project uses.
+#   4. To publish releases: protect the s3-panel-v* tag pattern if the token is
+#      protected, and tag as s3-panel-vX.Y.Z.
+# Then point the chart's image at
+# image-registry.openshift-image-registry.svc:5000/snappcloud-iam/s3-panel-staging:<tag>.
+
+# One pipeline per change: the MR pipeline while an MR is open, otherwise the
+# branch pipeline, plus tag pipelines for releases.
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+variables:
+  # The external route of teh-1's internal registry, where the staging panel
+  # host (unified-panel-dev, namespace snappcloud-iam) pulls from.
+  OKD4_TEH1_REGISTRY: image-registry.apps.private.okd4.teh-1.snappcloud.io
+  NPM_REGISTRY: "https://repo.snapp.tech/repository/npm-proxy/"
+  GOPROXY: "https://repo.snapp.tech/repository/goproxy/,direct"
+  # Base images. The Go image comes through the internal mirror, as IAM's does;
+  # node and alpine are pulled from Docker Hub, as IAM's node image is. Point
+  # any of them at registry.snapp.tech/docker/... if the runner cannot reach
+  # Docker Hub.
+  NODE_IMAGE: node:22-alpine
+  GO_IMAGE: registry.snapp.tech/docker/golang:1.27-alpine
+  RUNTIME_IMAGE: alpine:3.24
+  # The staging image serves the panel host at /storage (server.base_path in
+  # the chart values must match): the SPA's asset URLs are fixed at build time.
+  S3PANEL_BASE_PATH: /storage
+
+stages:
+  - test
+  - build
+
+.go:
+  image: $GO_IMAGE
+  variables:
+    GOPATH: "${CI_PROJECT_DIR}/.go"
+    GOFLAGS: "-mod=readonly"
+  cache:
+    key:
+      files: [go.sum]
+    paths: [.go/pkg/mod/]
+
+# The tests/ package is an integration suite that needs a live Ceph endpoint,
+# so it is excluded, as in the GitHub workflow.
+go:test:
+  extends: .go
+  stage: test
+  script:
+    - go test $(go list ./... | grep -v /tests)
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+
+helm:lint:
+  stage: test
+  image: registry.snapp.tech/docker/helm:latest
+  script:
+    - helm lint --strict deploy/helm
+    - helm template s3-panel deploy/helm --set snapp-object-store.enabled=true >/dev/null
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+
+# Builds the image once and pushes it to every REGISTRY_TARGETS line:
+#
+#   <image reference, minus the tag>|<username>|<password-or-token>
+#
+# Pipe-delimited so an unset variable leaves an EMPTY field rather than shifting
+# the others. A target without a credential fails the job before the build,
+# listing every missing one, instead of publishing to a subset.
+.publish_image:
+  image: docker:stable
+  services:
+    - docker:dind
+  stage: build
+  script:
+    - |
+      set -e
+      : "${IMAGE_TAGS:?IMAGE_TAGS is required}"
+      : "${REGISTRY_TARGETS:?REGISTRY_TARGETS is required}"
+
+      printf '%s\n' "$REGISTRY_TARGETS" | grep -v '^[[:space:]]*$' > /tmp/registry-targets
+
+      : > /tmp/missing-credentials
+      while IFS='|' read -r ref user token; do
+        if [ -z "$user" ] || [ -z "$token" ]; then
+          echo "  - $ref (username=$([ -n "$user" ] && echo set || echo MISSING), password=$([ -n "$token" ] && echo set || echo MISSING))" >> /tmp/missing-credentials
+        fi
+      done < /tmp/registry-targets
+      if [ -s /tmp/missing-credentials ]; then
+        echo "ERROR: no push credential for these destinations:" >&2
+        cat /tmp/missing-credentials >&2
+        echo "Create the CI variables named in this job's REGISTRY_TARGETS." >&2
+        exit 1
+      fi
+
+      TAGS=""
+      while IFS='|' read -r ref user token; do
+        host="${ref%%/*}"
+        echo "=== login $host ==="
+        echo "$token" | docker login -u "$user" "$host" --password-stdin
+        for tag in $IMAGE_TAGS; do TAGS="$TAGS -t $ref:$tag"; done
+      done < /tmp/registry-targets
+
+      # registry.snapp.tech is this GitLab's container registry ($CI_REGISTRY);
+      # the dind daemon pulls the internal Go base image from it.
+      echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
+
+      version="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+      docker build \
+        --build-arg NODE_IMAGE="$NODE_IMAGE" \
+        --build-arg GO_IMAGE="$GO_IMAGE" \
+        --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+        --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
+        --build-arg GOPROXY="$GOPROXY" \
+        --build-arg VITE_BASE_PATH="$S3PANEL_BASE_PATH" \
+        --build-arg VITE_APP_ENVIRONMENT="${DEPLOY_ENV:-staging}" \
+        --build-arg APP_VERSION="$version" \
+        $TAGS .
+
+      while IFS='|' read -r ref _; do
+        for tag in $IMAGE_TAGS; do
+          echo "=== push $ref:$tag ==="
+          docker push "$ref:$tag"
+        done
+      done < /tmp/registry-targets
+
+# The staging image, snappcloud-iam/s3-panel-staging, for the panel host.
+#
+# TEH1_STAGING_PUSH_TOKEN is a token for a ServiceAccount allowed to push to
+# the snappcloud-iam namespace on teh-1 (registry-editor there). It must be a
+# variable of THIS project: GitLab does not share variables across projects.
+s3-panel:staging:
+  extends: .publish_image
+  variables:
+    DEPLOY_ENV: staging
+    REGISTRY_TARGETS: |
+      $OKD4_TEH1_REGISTRY/snappcloud-iam/s3-panel-staging|unused|$TEH1_STAGING_PUSH_TOKEN
+  rules:
+    # A release tag: an immutable image named after it, e.g. :s3-panel-v1.9.0.
+    - if: $CI_COMMIT_TAG =~ /^s3-panel-v\d+\.\d+\.\d+$/
+      variables:
+        IMAGE_TAGS: "$CI_COMMIT_TAG"
+    # The default branch: the moving `latest`, plus the commit so a release can
+    # pin it.
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        IMAGE_TAGS: "latest $CI_COMMIT_SHORT_SHA"
+    # Merge requests: a manual button for a preview image, mr-<iid>, which
+    # never moves `latest`. The push token must then be available to MR
+    # pipelines (not restricted to protected refs).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
+      variables:
+        IMAGE_TAGS: "mr-$CI_MERGE_REQUEST_IID"

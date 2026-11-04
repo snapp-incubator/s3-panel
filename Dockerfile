@@ -1,5 +1,18 @@
+# Where base images, npm packages and Go modules come from. The defaults are
+# the public ones; a build behind a mirror (e.g. the fork's GitLab CI) overrides
+# them with --build-arg and gets the same image.
+ARG NODE_IMAGE=node:22-alpine
+ARG GO_IMAGE=golang:1.27-alpine
+ARG RUNTIME_IMAGE=alpine:3.24
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+ARG GOPROXY=https://proxy.golang.org,direct
+
 # 1) Build the frontend (Vite) into /fe/dist.
-FROM node:22-alpine AS frontend
+FROM ${NODE_IMAGE} AS frontend
+ARG NPM_REGISTRY
+# npm (installing corepack), corepack (fetching pnpm) and pnpm all read these.
+ENV npm_config_registry=${NPM_REGISTRY} \
+    COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 
 # Build-time configuration, exposed to Vite as environment variables.
 ARG VITE_API_LANGUAGE=fa
@@ -33,7 +46,9 @@ RUN if [ -n "$APP_VERSION" ]; then npm pkg set version="$APP_VERSION"; fi
 RUN pnpm run build
 
 # 2) Build the Go binary with the frontend embedded (internal/web/dist).
-FROM golang:1.27-alpine AS builder
+FROM ${GO_IMAGE} AS builder
+ARG GOPROXY
+ENV GOPROXY=${GOPROXY}
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -45,7 +60,7 @@ ARG APP_VERSION
 RUN go build -v -ldflags "-X github.com/snapp-incubator/S3-Panel/internal/version.Version=${APP_VERSION}" -o s3-panel ./cmd/s3-panel
 
 # 3) Minimal runtime image — a single binary that serves the API and the SPA.
-FROM alpine:3.24
+FROM ${RUNTIME_IMAGE}
 WORKDIR /app/
 COPY --from=builder /app/s3-panel .
 ENTRYPOINT ["./s3-panel"]
