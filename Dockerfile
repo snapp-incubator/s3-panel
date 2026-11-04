@@ -1,18 +1,20 @@
-# Where base images, npm packages and Go modules come from. The defaults are
-# the public ones; a build behind a mirror (e.g. the fork's GitLab CI) overrides
-# them with --build-arg and gets the same image.
+# Where base images, Alpine packages, npm packages and Go modules come from.
+# Unset, everything comes from the public defaults exactly as before; a build
+# behind mirrors (e.g. the fork's GitLab CI) sets them with --build-arg.
 ARG NODE_IMAGE=node:22-alpine
 ARG GO_IMAGE=golang:1.27-alpine
 ARG RUNTIME_IMAGE=alpine:3.24
-ARG NPM_REGISTRY=https://registry.npmjs.org/
+# e.g. https://mirror.example/repository/alpine, standing in for
+# https://dl-cdn.alpinelinux.org/alpine.
+ARG ALPINE_MIRROR=
+# An npm registry for npm, corepack (fetching pnpm) and pnpm.
+ARG NPM_REGISTRY=
 ARG GOPROXY=https://proxy.golang.org,direct
 
 # 1) Build the frontend (Vite) into /fe/dist.
 FROM ${NODE_IMAGE} AS frontend
+ARG ALPINE_MIRROR
 ARG NPM_REGISTRY
-# npm (installing corepack), corepack (fetching pnpm) and pnpm all read these.
-ENV npm_config_registry=${NPM_REGISTRY} \
-    COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 
 # Build-time configuration, exposed to Vite as environment variables.
 ARG VITE_API_LANGUAGE=fa
@@ -35,10 +37,20 @@ ENV VITE_API_LANGUAGE=$VITE_API_LANGUAGE \
 
 # Corepack is unbundled from Node 25+, so install it explicitly (works on any
 # Node major); it activates the pnpm version pinned in package.json.
-RUN apk add --no-cache git && npm install -g corepack@latest && corepack enable
+#
+# The registry goes on the command line, not in npm_config_registry: pnpm 11
+# ignores npm's variables. corepack replaces the "https://registry.npmjs.org"
+# prefix of pnpm's tarball URL with its registry, hence no trailing slash.
+RUN if [ -n "$ALPINE_MIRROR" ]; then \
+      sed -i -E "s#https?://dl-cdn.alpinelinux.org/alpine#${ALPINE_MIRROR%/}#" /etc/apk/repositories; \
+    fi && \
+    apk add --no-cache git && \
+    npm install -g ${NPM_REGISTRY:+--registry=$NPM_REGISTRY} corepack@latest && \
+    corepack enable
 WORKDIR /fe
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN if [ -n "$NPM_REGISTRY" ]; then export COREPACK_NPM_REGISTRY="${NPM_REGISTRY%/}"; fi && \
+    pnpm install --frozen-lockfile ${NPM_REGISTRY:+--registry=$NPM_REGISTRY}
 COPY frontend/ ./
 # Stamp the release version into package.json so the UI (vite-plugin-package-version)
 # shows the tag instead of the committed placeholder.

@@ -9,18 +9,24 @@
 # list, so adding a destination is one more line.
 #
 # Setting up the GitLab side is manual, once:
-#   1. A GitLab project for the fork, mirroring it (pull mirror from the fork,
-#      or push the fork's branches and tags there).
-#   2. CI/CD variable TEH1_STAGING_PUSH_TOKEN in that project: a token for a
-#      ServiceAccount with registry-editor in teh-1's snappcloud-iam namespace
-#      (IAM's own token can be reused; variables are per project). Masked. Leave
-#      it unprotected if MR preview images are wanted, or protect the default
-#      branch and the s3-panel-v* tags if not.
-#   3. Runners with docker:dind, as IAM's project uses.
-#   4. To publish releases: protect the s3-panel-v* tag pattern if the token is
-#      protected, and tag as s3-panel-vX.Y.Z.
+#   1. A GitLab project for the fork. Either a pull mirror of the fork (a GitLab
+#      Premium feature) with "Trigger pipelines for mirror updates" turned on,
+#      or a push of the fork's branches and tags into it. Set its default branch
+#      to the fork's working branch: the `latest` image follows it.
+#   2. A DEDICATED push credential, not IAM's: a ServiceAccount allowed to push
+#      only what this project publishes (ideally just the s3-panel-staging image
+#      stream in teh-1's snappcloud-iam). registry-editor there could overwrite
+#      IAM's and the adapters' images too, and an unprotected token reaches every
+#      branch's pipeline, which runs that branch's own copy of this file.
+#   3. CI/CD variable TEH1_STAGING_PUSH_TOKEN, of type Variable (not File),
+#      Masked and PROTECTED; protect the default branch and the s3-panel-v* tag
+#      pattern so their pipelines receive it.
+#   4. Runners enabled for the project that run docker:dind (privileged), as
+#      IAM's do; and access for this project's job token to the internal image
+#      registry (registry.snapp.tech) if it restricts job tokens.
 # Then point the chart's image at
-# image-registry.openshift-image-registry.svc:5000/snappcloud-iam/s3-panel-staging:<tag>.
+# image-registry.openshift-image-registry.svc:5000/snappcloud-iam/s3-panel-staging:<tag>
+# (pulling from the same namespace needs no extra RoleBinding).
 
 # One pipeline per change: the MR pipeline while an MR is open, otherwise the
 # branch pipeline, plus tag pipelines for releases.
@@ -37,6 +43,7 @@ variables:
   # host (unified-panel-dev, namespace snappcloud-iam) pulls from.
   OKD4_TEH1_REGISTRY: image-registry.apps.private.okd4.teh-1.snappcloud.io
   NPM_REGISTRY: "https://repo.snapp.tech/repository/npm-proxy/"
+  ALPINE_MIRROR: "https://repo.snapp.tech/repository/alpine"
   GOPROXY: "https://repo.snapp.tech/repository/goproxy/,direct"
   # Base images. The Go image comes through the internal mirror, as IAM's does;
   # node and alpine are pulled from Docker Hub, as IAM's node image is. Point
@@ -131,11 +138,15 @@ helm:lint:
       # the dind daemon pulls the internal Go base image from it.
       echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" "$CI_REGISTRY" --password-stdin
 
-      version="${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+      # The release number alone ("1.9.0" from s3-panel-v1.9.0), as upstream's
+      # release workflow stamps it; a branch build reports its commit.
+      version="${CI_COMMIT_TAG#s3-panel-v}"
+      version="${version:-$CI_COMMIT_SHORT_SHA}"
       docker build \
         --build-arg NODE_IMAGE="$NODE_IMAGE" \
         --build-arg GO_IMAGE="$GO_IMAGE" \
         --build-arg RUNTIME_IMAGE="$RUNTIME_IMAGE" \
+        --build-arg ALPINE_MIRROR="$ALPINE_MIRROR" \
         --build-arg NPM_REGISTRY="$NPM_REGISTRY" \
         --build-arg GOPROXY="$GOPROXY" \
         --build-arg VITE_BASE_PATH="$S3PANEL_BASE_PATH" \
@@ -152,9 +163,9 @@ helm:lint:
 
 # The staging image, snappcloud-iam/s3-panel-staging, for the panel host.
 #
-# TEH1_STAGING_PUSH_TOKEN is a token for a ServiceAccount allowed to push to
-# the snappcloud-iam namespace on teh-1 (registry-editor there). It must be a
-# variable of THIS project: GitLab does not share variables across projects.
+# TEH1_STAGING_PUSH_TOKEN is this project's own protected push credential
+# (setup step 2 above). Only protected refs build an image: there is no
+# merge-request preview, which would need the token unprotected.
 s3-panel:staging:
   extends: .publish_image
   variables:
@@ -162,7 +173,9 @@ s3-panel:staging:
     REGISTRY_TARGETS: |
       $OKD4_TEH1_REGISTRY/snappcloud-iam/s3-panel-staging|unused|$TEH1_STAGING_PUSH_TOKEN
   rules:
-    # A release tag: an immutable image named after it, e.g. :s3-panel-v1.9.0.
+    # A release tag: an image named after it, e.g. :s3-panel-v1.9.0. Immutable
+    # by convention only: the registry would accept a re-run of this job, which
+    # rebuilds from the floating base images, so do not retry a released tag.
     - if: $CI_COMMIT_TAG =~ /^s3-panel-v\d+\.\d+\.\d+$/
       variables:
         IMAGE_TAGS: "$CI_COMMIT_TAG"
@@ -171,11 +184,3 @@ s3-panel:staging:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       variables:
         IMAGE_TAGS: "latest $CI_COMMIT_SHORT_SHA"
-    # Merge requests: a manual button for a preview image, mr-<iid>, which
-    # never moves `latest`. The push token must then be available to MR
-    # pipelines (not restricted to protected refs).
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: manual
-      allow_failure: true
-      variables:
-        IMAGE_TAGS: "mr-$CI_MERGE_REQUEST_IID"
