@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"go.uber.org/zap"
 
 	"github.com/snapp-incubator/S3-Panel/internal/control"
 )
@@ -38,14 +39,19 @@ const bucketPagePath = "/object-storage/s3-bucket/buckets/"
 func (s *Server) handleResolveIAMBucket() echo.HandlerFunc {
 	return func(c echo.Context) error {
 		base := s.Config.Server.Base()
+		// Echo hands over the raw (still escaped) value only when the path had
+		// to be matched raw, i.e. it carried an escaped "/"; otherwise it is
+		// already decoded, and decoding it again would turn "%25" into "%".
 		raw := c.Param("*")
-		if unescaped, err := url.PathUnescape(raw); err == nil {
-			raw = unescaped
+		if c.Request().URL.RawPath != "" {
+			if unescaped, err := url.PathUnescape(raw); err == nil {
+				raw = unescaped
+			}
 		}
 		service, name := splitResourceID(strings.TrimSpace(raw))
 		name = normaliseBucketName(name)
 		region := strings.TrimSpace(c.QueryParam("region"))
-		if name == "" {
+		if name == "" || name == "." || name == ".." {
 			return c.Redirect(http.StatusFound, base+bucketPagePath)
 		}
 
@@ -62,10 +68,17 @@ func (s *Server) handleResolveIAMBucket() echo.HandlerFunc {
 
 		target, targetRegion := name, region
 		ctx := control.WithActAs(c.Request().Context(), session.ActAs)
-		if buckets, err := s.control.ListBuckets(ctx, session.AccessToken); err == nil {
-			if b := matchIAMBucket(buckets, name, service, region); b != nil {
-				target, targetRegion = b.Name, b.BucketRegion
-			}
+		buckets, err := s.control.ListBuckets(ctx, session.AccessToken)
+		if err != nil {
+			// Fails safe: the name goes through as given, and the page asks again.
+			s.logger.Warn("resolver could not list the person's buckets", zap.Error(err))
+		} else if b := matchIAMBucket(buckets, name, service, region); b != nil {
+			target, targetRegion = b.Name, b.BucketRegion
+		}
+		if targetRegion == "" {
+			// Unresolved, the service still says which region was meant, so the
+			// page does not pick a same-named bucket from another one.
+			targetRegion = service
 		}
 
 		dest := base + bucketPagePath + url.PathEscape(target)
@@ -96,10 +109,15 @@ func normaliseBucketName(name string) string {
 	return name
 }
 
-// matchIAMBucket picks the bucket a link names out of the person's list. A
-// region that matches none of the candidates is ignored rather than trusted,
-// so a link in an unexpected region spelling still lands on the bucket when
-// its name is unique.
+// matchIAMBucket picks the bucket a link names out of the person's list.
+//
+// A service in a resource ID names its region precisely, and is never
+// overridden: a bucket of that name in another region is a DIFFERENT bucket,
+// so no match there leaves the link unresolved (the page then answers "not
+// found", as requireBucketPermission does for a region mismatch). A region
+// parameter is honoured the same way when it names a region the person has
+// any bucket in; only a spelling that names none of them is ignored, and then
+// only when the name alone is unambiguous.
 func matchIAMBucket(buckets []control.Bucket, name, service, region string) *control.Bucket {
 	var candidates []*control.Bucket
 	for i := range buckets {
@@ -107,30 +125,55 @@ func matchIAMBucket(buckets []control.Bucket, name, service, region string) *con
 			candidates = append(candidates, &buckets[i])
 		}
 	}
-	for _, want := range []string{service, region} {
-		if want == "" {
-			continue
+	if service != "" {
+		return pickRegion(candidates, service)
+	}
+	if region != "" {
+		if b := pickRegion(candidates, region); b != nil {
+			return b
 		}
-		for _, b := range candidates {
-			if regionMatches(*b, want) {
-				return b
+		for i := range buckets {
+			if regionMatchesExactly(buckets[i], region) || regionMatchesBySuffix(buckets[i], region) {
+				// A region the person knows, holding no bucket of this name.
+				return nil
 			}
 		}
 	}
-	if len(candidates) > 0 {
+	if len(candidates) == 1 || (region == "" && len(candidates) > 0) {
 		return candidates[0]
 	}
 	return nil
 }
 
-// regionMatches reports whether a region or service spelling names the
-// bucket's region: exactly, as the service in its resource ID, or as a
-// "<prefix>-<region>" name such as "ceph-teh-1" or "okd4-teh-1".
-func regionMatches(b control.Bucket, want string) bool {
-	if b.BucketRegion != "" && (strings.EqualFold(want, b.BucketRegion) ||
-		strings.HasSuffix(strings.ToLower(want), "-"+strings.ToLower(b.BucketRegion))) {
+// pickRegion returns the candidate in the named region, preferring an exact
+// match over a "<prefix>-<region>" one, so "us-teh-1" can never pick teh-1 when
+// us-teh-1 itself is there.
+func pickRegion(candidates []*control.Bucket, want string) *control.Bucket {
+	for _, b := range candidates {
+		if regionMatchesExactly(*b, want) {
+			return b
+		}
+	}
+	for _, b := range candidates {
+		if regionMatchesBySuffix(*b, want) {
+			return b
+		}
+	}
+	return nil
+}
+
+// regionMatchesExactly reports whether want is the bucket's region, or the
+// service in its resource ID ("ceph-teh-1").
+func regionMatchesExactly(b control.Bucket, want string) bool {
+	if b.BucketRegion != "" && strings.EqualFold(want, b.BucketRegion) {
 		return true
 	}
 	service, _, _ := strings.Cut(b.ResourceID, "|")
 	return service != "" && strings.EqualFold(want, service)
+}
+
+// regionMatchesBySuffix reports whether want is a "<prefix>-<region>" name for
+// the bucket's region, such as the catalog's "okd4-teh-1".
+func regionMatchesBySuffix(b control.Bucket, want string) bool {
+	return b.BucketRegion != "" && strings.HasSuffix(strings.ToLower(want), "-"+strings.ToLower(b.BucketRegion))
 }

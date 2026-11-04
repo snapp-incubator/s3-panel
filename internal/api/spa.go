@@ -19,7 +19,7 @@ const cspNoncePlaceholder = "__CSP_NONCE__"
 
 // backendPrefixes are the paths the SPA must never answer: they belong to
 // handlers registered on the router.
-var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", "/readyz", "/docs", "/iam/buckets"}
+var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", "/readyz", "/docs"}
 
 // frontendMiddleware serves the embedded frontend SPA for any GET or HEAD under
 // the base path that is not an API, auth, health or docs route. A path naming a
@@ -28,15 +28,19 @@ var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", 
 // outside the base path are not the panel's and fall through.
 //
 // render answers for a page; serveIndex is the plain answer.
-func frontendMiddleware(base string, render pageRenderer) echo.MiddlewareFunc {
-	return spaMiddleware(web.FS(), base, render)
+//
+// backend names further prefixes the SPA must leave to the router, for routes
+// only some modes register.
+func frontendMiddleware(base string, render pageRenderer, backend ...string) echo.MiddlewareFunc {
+	return spaMiddleware(web.FS(), base, render, backend...)
 }
 
 // pageRenderer answers a request for one of the SPA's pages, given index.html.
 type pageRenderer func(c echo.Context, index []byte) error
 
 // spaMiddleware is frontendMiddleware over any build, so tests can hand it one.
-func spaMiddleware(files fs.FS, base string, render pageRenderer) echo.MiddlewareFunc {
+func spaMiddleware(files fs.FS, base string, render pageRenderer, backend ...string) echo.MiddlewareFunc {
+	skip := append(append([]string{}, backendPrefixes...), backend...)
 	index, err := fs.ReadFile(files, "index.html")
 	if err != nil {
 		// internal/web/dist always carries at least a placeholder index.html.
@@ -53,7 +57,7 @@ func spaMiddleware(files fs.FS, base string, render pageRenderer) echo.Middlewar
 			if !ok {
 				return next(c)
 			}
-			for _, prefix := range backendPrefixes {
+			for _, prefix := range skip {
 				if p == prefix || strings.HasPrefix(p, prefix+"/") {
 					return next(c)
 				}
