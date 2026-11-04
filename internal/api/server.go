@@ -134,28 +134,93 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 	return nil
 }
 
+// logoutRevokeTimeout bounds the revocations a sign-out starts. They run after
+// the sign-out has answered, so it only stops them running forever.
+const logoutRevokeTimeout = time.Minute
+
 // revokeOnLogout revokes the storage credentials this console obtained for the
-// person, then forgets the ones it cached.
-//
-// No region is named, so the control endpoint revokes in EVERY region the
-// person holds a grant in (IAM's POST /sts/logout). Naming this instance's
-// region, as it once did, left alive every credential minted for a bucket in
-// another region, and in iam mode one instance serves buckets in all of them.
+// person. The cached ones are forgotten at once; the revocations run in the
+// background, detached from the request, so a slow or unreachable region can
+// neither hold the sign-out nor be cut short when the browser moves on.
 //
 // Best effort: a failed revoke must not stop the person signing out, and the
 // credential still expires on its own.
-//
-// Only the person's OWN credentials are revoked (act-as cleared). IAM revokes
-// per effective principal, so revoking while acting would kill other admins'
-// credentials for the same shared debug user; those minted here while acting
-// never leave the panel and lapse with the credential TTL.
 func (s *Server) revokeOnLogout(ctx context.Context, session auth.Session) {
-	if err := s.control.RevokeSessions(control.WithActAs(ctx, ""), session.AccessToken, "", "console"); err != nil {
-		s.logger.Warn("could not revoke storage credentials on sign-out",
-			zap.String("subject", session.Subject), zap.Error(err))
-	}
 	// The prefix also covers this session's acting entries.
-	s.credentials.dropIdentity(session.Subject)
+	cached := s.credentials.takeIdentity(session.Subject)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), logoutRevokeTimeout)
+		defer cancel()
+		s.revokeCredentials(ctx, session, cached)
+	}()
+}
+
+// revokeCredentials revokes, in parallel:
+//
+//   - the person's own console credentials in every region they hold a grant
+//     in (no region named: IAM's POST /sts/logout walks them);
+//   - the same, by name, in this instance's region and in every region the
+//     person was minted a credential for here. Named, IAM revokes even where
+//     the person's grant is already gone, which the walk above cannot see;
+//   - each credential minted here while acting as a debug user, by its session
+//     ID, as that debug user. Never the debug user's credentials wholesale: IAM
+//     revokes per principal, and a shared debug user's other credentials belong
+//     to other admins.
+func (s *Server) revokeCredentials(ctx context.Context, session auth.Session, cached map[string]*control.Credentials) {
+	own := control.WithActAs(ctx, "")
+	regions := map[string]bool{}
+	if s.Config.Server.Region != "" {
+		regions[s.Config.Server.Region] = true
+	}
+	type acted struct{ region, id string }
+	var actedSessions []acted
+	for key, cred := range cached {
+		region, acting := cachedRegion(key, session.Subject)
+		switch {
+		case acting && cred.SessionID != "" && region != "" && session.ActAs != "":
+			actedSessions = append(actedSessions, acted{region, cred.SessionID})
+		case !acting && region != "":
+			regions[region] = true
+		}
+	}
+
+	var wg sync.WaitGroup
+	revoke := func(what string, call func() error) {
+		wg.Go(func() {
+			if err := call(); err != nil {
+				s.logger.Warn("could not revoke storage credentials on sign-out",
+					zap.String("subject", session.Subject), zap.String("what", what), zap.Error(err))
+			}
+		})
+	}
+	revoke("every granted region", func() error {
+		return s.control.RevokeSessions(own, session.AccessToken, "", "console")
+	})
+	for region := range regions {
+		revoke("region "+region, func() error {
+			return s.control.RevokeSessions(own, session.AccessToken, region, "console")
+		})
+	}
+	asDebugUser := control.WithActAs(ctx, session.ActAs)
+	for _, a := range actedSessions {
+		revoke("acting session in "+a.region, func() error {
+			return s.control.RevokeSession(asDebugUser, session.AccessToken, a.region, a.id)
+		})
+	}
+	wg.Wait()
+}
+
+// cachedRegion reads the region out of a credential cache key
+// ("<subject>[|as:<email>]|<region>|<bucket>|<access>") and whether the entry
+// was minted while acting.
+func cachedRegion(key, subject string) (region string, acting bool) {
+	rest := strings.TrimPrefix(key, subject+"|")
+	if strings.HasPrefix(rest, "as:") {
+		acting = true
+		_, rest, _ = strings.Cut(rest, "|")
+	}
+	region, _, _ = strings.Cut(rest, "|")
+	return region, acting
 }
 
 func (s *Server) registerCephRepository() {
