@@ -39,7 +39,15 @@
     "rules": {
       "preset": "recommended",
       "style": {
-        "noNonNullAssertion": "off"
+        "noNonNullAssertion": "off",
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "zod": "Import z from '@/lib/zod', which turns zod's eval-based JIT off before any schema exists (the CSP forbids eval)."
+            }
+          }
+        }
       },
       "suspicious": {
         "noExplicitAny": "warn",
@@ -52,6 +60,12 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["src/lib/zod.ts"],
+      "linter": { "rules": { "style": { "noRestrictedImports": "off" } } }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "single",

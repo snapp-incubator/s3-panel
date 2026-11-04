@@ -1,7 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
-import type { z } from 'zod'
-
 import { Button } from '@/components/shadcn/button'
 import {
   Form,
@@ -13,6 +11,7 @@ import {
 } from '@/components/shadcn/form'
 import { Textarea } from '@/components/shadcn/textarea'
 import { t } from '@/i18n'
+import type { z } from '@/lib/zod'
 
 import { FormSchemaType } from './createBucket.types'
 

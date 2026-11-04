@@ -209,3 +209,19 @@ func TestShareLinksArePOST(t *testing.T) {
 		}
 	}
 }
+
+// TestEnforcedCSPKeepsTheWholePolicy: switching to enforcement must send the
+// full policy, frame-ancestors included, as the one enforced header.
+func TestEnforcedCSPKeepsTheWholePolicy(t *testing.T) {
+	e := echo.New()
+	e.Use(securityHeadersEnforcing(true))
+	e.GET("/", func(c echo.Context) error { return c.NoContent(http.StatusNoContent) })
+	h := serve(e, httptest.NewRequest(http.MethodGet, "/", nil)).Header()
+	csp := h.Values("Content-Security-Policy")
+	if len(csp) != 1 || !strings.Contains(csp[0], "script-src 'nonce-") || !strings.Contains(csp[0], "frame-ancestors 'none'") {
+		t.Errorf("enforced Content-Security-Policy = %q, want the one full policy", csp)
+	}
+	if h.Get("Content-Security-Policy-Report-Only") != "" {
+		t.Error("a report-only policy is still sent alongside the enforced one")
+	}
+}

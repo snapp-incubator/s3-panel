@@ -1,6 +1,4 @@
 import { useMutation } from '@tanstack/react-query'
-import type { z } from 'zod'
-
 import { createBucket } from '@/api/s3'
 import {
   Dialog,
@@ -11,6 +9,7 @@ import {
 } from '@/components/shadcn/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { t } from '@/i18n'
+import type { z } from '@/lib/zod'
 import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
 import BucketForm from './bucket-form'
