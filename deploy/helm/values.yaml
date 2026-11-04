@@ -93,10 +93,12 @@ snapp-object-store:
       #  - label: Buckets
       #    path: /storage/object-storage/s3-bucket/buckets
       # How the console opens catalog resources here. Each resource pattern
-      # must be one the app was admitted for.
+      # must be one the app was admitted for. Bucket links go to
+      # <base_path>/iam/buckets/{name}, which resolves the control endpoint's
+      # bucket name (tenanted or not) to the bucket's page.
       links: []
       #  - resource: "ceph-*|bucket"
-      #    path: "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"
+      #    path: "/storage/iam/buckets/{name}?region={region}"
 
     oidc:
       issuer_url: ""

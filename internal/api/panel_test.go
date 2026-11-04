@@ -290,7 +290,7 @@ func TestRegisterPanelRegistersTheManifest(t *testing.T) {
 	s.Config.Server.BasePath = "/storage"
 	s.Config.Panel = config.PanelConfig{
 		Enabled: true, APIURL: registry.URL + "/api", APIKey: "app_test",
-		Links: []config.PanelLink{{Resource: "ceph-*|bucket", Path: "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"}},
+		Links: []config.PanelLink{{Resource: "ceph-*|bucket", Path: "/storage/iam/buckets/{name}?region={region}"}},
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
