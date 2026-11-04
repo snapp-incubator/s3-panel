@@ -262,7 +262,12 @@ func (s *Server) registerRouter() {
 	// Before anything that can change state, the login endpoints included.
 	newRouter.Use(s.refuseCrossOrigin())
 	if s.Config.Server.ServeFrontend {
-		newRouter.Use(frontendMiddleware(s.Config.Server.Base(), s.renderPage))
+		var backend []string
+		if s.Config.Server.IsIAMMode() {
+			// The console-link resolver, registered with the login routes.
+			backend = append(backend, "/iam/buckets")
+		}
+		newRouter.Use(frontendMiddleware(s.Config.Server.Base(), s.renderPage, backend...))
 		s.logger.Info("### Serving embedded frontend ###")
 	} else {
 		s.logger.Info("### Frontend serving disabled (API-only) ###")

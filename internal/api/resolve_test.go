@@ -4,8 +4,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/snapp-incubator/S3-Panel/internal/config"
 	"github.com/snapp-incubator/S3-Panel/internal/control"
@@ -23,6 +26,8 @@ const iamBucketList = `<ListAllMyBucketsResult><Buckets>` +
 	`<ResourceID>ceph-teh-2|bucket|okd4_teh_1__payments--exports</ResourceID></Bucket>` +
 	`<Bucket><Name>legacy-reports</Name><BucketRegion>teh-1</BucketRegion>` +
 	`<ResourceID>ceph-teh-1|bucket|legacy-reports</ResourceID></Bucket>` +
+	`<Bucket><Name>dup</Name><BucketRegion>teh-1</BucketRegion></Bucket>` +
+	`<Bucket><Name>dup</Name><BucketRegion>us-teh-1</BucketRegion></Bucket>` +
 	`</Buckets></ListAllMyBucketsResult>`
 
 func resolverServer(t *testing.T, base string) *Server {
@@ -62,9 +67,23 @@ func TestResolveIAMBucketNames(t *testing.T) {
 		// The region as the service, or as a catalog name ending in it.
 		"/storage/iam/buckets/okd4_teh_1__payments--exports?region=ceph-teh-2": tenanted + "teh-2",
 		"/storage/iam/buckets/okd4_teh_1__payments--exports?region=okd4-teh-2": tenanted + "teh-2",
-		// No region, or one that matches nothing: the first match.
-		"/storage/iam/buckets/okd4_teh_1__payments--exports":               tenanted + "teh-1",
-		"/storage/iam/buckets/okd4_teh_1__payments--exports?region=mars-9": tenanted + "teh-1",
+		// No region: the first match.
+		"/storage/iam/buckets/okd4_teh_1__payments--exports": tenanted + "teh-1",
+		// A region holding no bucket of that name is not swapped for another
+		// region's namesake, whether the person knows the region or not: the
+		// page then answers not found.
+		"/storage/iam/buckets/okd4_teh_1__payments--exports?region=teh-3":                           tenanted + "teh-3",
+		"/storage/iam/buckets/okd4_teh_1__payments--exports?region=mars-9":                          tenanted + "mars-9",
+		"/storage/iam/buckets/" + url.PathEscape("ceph-teh-3|bucket|okd4_teh_1__payments--exports"): tenanted + "ceph-teh-3",
+		// An unknown spelling is ignored only when the name alone is unique.
+		"/storage/iam/buckets/legacy-reports?region=mars-9": "/storage/object-storage/s3-bucket/buckets/legacy-reports?region=teh-1",
+		// An exact region wins over a "<prefix>-<region>" one.
+		"/storage/iam/buckets/dup?region=us-teh-1": "/storage/object-storage/s3-bucket/buckets/dup?region=us-teh-1",
+		"/storage/iam/buckets/dup?region=teh-1":    "/storage/object-storage/s3-bucket/buckets/dup?region=teh-1",
+		// Decoded once: "%25" stays a literal "%".
+		"/storage/iam/buckets/a%2525b": "/storage/object-storage/s3-bucket/buckets/a%2525b",
+		// Dot segments are not names.
+		"/storage/iam/buckets/..": "/storage/object-storage/s3-bucket/buckets/",
 		// RGW's spellings, encoded or not.
 		"/storage/iam/buckets/okd4_teh_1__payments%2Fexports?region=teh-2": tenanted + "teh-2",
 		"/storage/iam/buckets/okd4_teh_1__payments:exports":                tenanted + "teh-1",
@@ -113,5 +132,17 @@ func TestNormaliseBucketName(t *testing.T) {
 		if got := normaliseBucketName(in); got != want {
 			t.Errorf("normaliseBucketName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestStandaloneSPAKeepsIAMPaths: the resolver exists only in iam mode, so in
+// the standalone s3 mode the SPA still answers /iam/buckets/... as before.
+func TestStandaloneSPAKeepsIAMPaths(t *testing.T) {
+	s := &Server{Config: config.DefaultConfig(), logger: zap.NewNop()}
+	s.registerRouter()
+	s.registerRoutes()
+	rec := serve(s.Router, httptest.NewRequest(http.MethodGet, "/iam/buckets/x", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<html") {
+		t.Errorf("s3 mode /iam/buckets/x = %d, want the SPA", rec.Code)
 	}
 }
