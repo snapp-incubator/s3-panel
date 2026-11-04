@@ -127,24 +127,35 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 		// IAM falls back to the groups it synced into its own database.
 		s.auth.Logger = s.logger
 		s.auth.ResolveAdmin = s.control.RealIsAdmin
-		s.auth.OnLogout = func(ctx context.Context, session auth.Session) {
-			// Best effort: a failed revoke must not stop the person signing
-			// out, and the credential still expires on its own.
-			//
-			// Only the person's OWN credentials are revoked (act-as cleared).
-			// IAM revokes per effective principal, so revoking while acting
-			// would kill other admins' credentials for the same debug user.
-			if err := s.control.RevokeSessions(control.WithActAs(ctx, ""), session.AccessToken, s.Config.Server.Region, "console"); err != nil {
-				s.logger.Warn("could not revoke storage credentials on sign-out",
-					zap.String("subject", session.Subject), zap.Error(err))
-			}
-			// The prefix also covers this session's acting entries.
-			s.credentials.dropIdentity(session.Subject)
-		}
+		s.auth.OnLogout = s.revokeOnLogout
 	}
 	s.credentials = newCredentialCache(ctx)
 
 	return nil
+}
+
+// revokeOnLogout revokes the storage credentials this console obtained for the
+// person, then forgets the ones it cached.
+//
+// No region is named, so the control endpoint revokes in EVERY region the
+// person holds a grant in (IAM's POST /sts/logout). Naming this instance's
+// region, as it once did, left alive every credential minted for a bucket in
+// another region, and in iam mode one instance serves buckets in all of them.
+//
+// Best effort: a failed revoke must not stop the person signing out, and the
+// credential still expires on its own.
+//
+// Only the person's OWN credentials are revoked (act-as cleared). IAM revokes
+// per effective principal, so revoking while acting would kill other admins'
+// credentials for the same shared debug user; those minted here while acting
+// never leave the panel and lapse with the credential TTL.
+func (s *Server) revokeOnLogout(ctx context.Context, session auth.Session) {
+	if err := s.control.RevokeSessions(control.WithActAs(ctx, ""), session.AccessToken, "", "console"); err != nil {
+		s.logger.Warn("could not revoke storage credentials on sign-out",
+			zap.String("subject", session.Subject), zap.Error(err))
+	}
+	// The prefix also covers this session's acting entries.
+	s.credentials.dropIdentity(session.Subject)
 }
 
 func (s *Server) registerCephRepository() {
