@@ -314,12 +314,21 @@ func controlError(err error, fallback string) error {
 // dropIdentity removes every credential cached for one identity, so switching
 // who you act as can never reuse the previous identity's credential.
 func (c *credentialCache) dropIdentity(identity string) {
+	c.takeIdentity(identity)
+}
+
+// takeIdentity removes every credential cached for one identity and returns
+// them by key, for a caller that still has to revoke them.
+func (c *credentialCache) takeIdentity(identity string) map[string]*control.Credentials {
 	prefix := identity + "|"
+	taken := map[string]*control.Credentials{}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for key := range c.items {
+	for key, cred := range c.items {
 		if strings.HasPrefix(key, prefix) {
+			taken[key] = cred
 			delete(c.items, key)
 		}
 	}
+	return taken
 }

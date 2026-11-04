@@ -456,3 +456,28 @@ func (c *Client) RevokeSessions(ctx context.Context, token, region, client strin
 	}
 	return nil
 }
+
+// RevokeSession revokes ONE session credential the control endpoint issued
+// (DELETE <sts>/sessions/{id}?region=). The endpoint revokes it only for the
+// session's owner, which, for a credential minted while acting as a debug user,
+// is that debug user: the context must carry the same act-as.
+func (c *Client) RevokeSession(ctx context.Context, token, region, id string) error {
+	u := c.stsURL + "/sessions/" + url.PathEscape(id) + "?region=" + url.QueryEscape(region)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	applyActAs(req)
+	c.markPanel(req)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close() //nolint:errcheck // response discarded
+	if res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 2048))
+		return fmt.Errorf("revoke session: status %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
