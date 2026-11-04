@@ -19,7 +19,7 @@ const cspNoncePlaceholder = "__CSP_NONCE__"
 
 // backendPrefixes are the paths the SPA must never answer: they belong to
 // handlers registered on the router.
-var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", "/readyz", "/docs"}
+var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", "/readyz", "/docs", "/iam/buckets"}
 
 // frontendMiddleware serves the embedded frontend SPA for any GET or HEAD under
 // the base path that is not an API, auth, health or docs route. A path naming a

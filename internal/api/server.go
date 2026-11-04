@@ -222,6 +222,9 @@ func (s *Server) registerRoutes() {
 	// callback (it arrives with no Authorization header and cannot be given one).
 	if s.auth != nil {
 		s.auth.RegisterRoutes(base)
+		// Where links from a unified console land: the control endpoint's name
+		// for a bucket, redirected to this panel's page for it.
+		base.GET("/iam/buckets/*", s.handleResolveIAMBucket())
 	}
 
 	// Serve the API under both /api and /s3/api. The bundled frontend calls

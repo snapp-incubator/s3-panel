@@ -82,7 +82,7 @@ path = "/storage/object-storage/s3-bucket/buckets"
 
 [[panel.links]]
 resource = "ceph-*|bucket"
-path = "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"
+path = "/storage/iam/buckets/{name}?region={region}"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)

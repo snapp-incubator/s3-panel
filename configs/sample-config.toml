@@ -137,7 +137,10 @@ secret_key = ""
 # path = "/storage/object-storage/s3-bucket/buckets"
 #
 # # How the console opens catalog resources here. The resource pattern must be
-# # one the app was admitted for. None by default.
+# # one the app was admitted for. None by default. Point bucket links at
+# # <base_path>/iam/buckets/{name}: it takes the control endpoint's name for a
+# # bucket ("<tenant>--<bucket>", "<tenant>/<bucket>", a bare name or a whole
+# # resource ID) and a region in any spelling, and redirects to the bucket's page.
 # [[panel.links]]
 # resource = "ceph-*|bucket"
-# path = "/storage/object-storage/s3-bucket/buckets/{name}?region={region}"
+# path = "/storage/iam/buckets/{name}?region={region}"
