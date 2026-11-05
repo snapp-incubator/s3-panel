@@ -27,6 +27,13 @@ const stateCookieName = "s3panel_oidc_state"
 // stateTTL bounds how long a login may sit unfinished.
 const stateTTL = 10 * time.Minute
 
+// signedOutCookieName marks a browser that just signed out explicitly, until
+// the next /auth/me reports it and clears it (see MarkSignOut).
+const signedOutCookieName = "s3panel_signed_out"
+
+// signedOutTTL bounds how long the sign-out marker waits for the next visit.
+const signedOutTTL = 10 * time.Minute
+
 // DefaultSessionTTL is how long a sign-in lasts when unconfigured. It bounds the
 // session independently of the access token, which is refreshed underneath it.
 const DefaultSessionTTL = 12 * time.Hour
@@ -43,6 +50,14 @@ type Authenticator struct {
 	// is about to end. The server uses it to revoke the storage credentials this
 	// console obtained for the person; left nil, logout just clears the cookie.
 	OnLogout func(context.Context, Session)
+
+	// MarkSignOut has Logout leave a marker that the next /auth/me reports once
+	// ("signed_out": true) and clears. Part of a console, the SPA signs in
+	// silently through the provider, at most once per short window so a sign-in
+	// that does not stick cannot loop; an explicit sign-out followed by a quick
+	// return is not such a loop, and the marker says so. Off, Logout sets no
+	// marker and nothing changes.
+	MarkSignOut bool
 
 	// OnSignIn runs once a sign-in has completed and its session is saved, with
 	// that session. Left nil, nothing runs.
@@ -303,7 +318,20 @@ func (a *Authenticator) Logout(c echo.Context) error {
 	}
 	a.clearCookie(c, a.cookieName())
 	a.expireLegacyCookies(c)
+	if a.MarkSignOut {
+		a.setCookie(c, signedOutCookieName, "1", signedOutTTL)
+	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// takeSignOutMarker reports whether the browser carries the sign-out marker,
+// clearing it if so: it speaks for one visit only.
+func (a *Authenticator) takeSignOutMarker(c echo.Context) bool {
+	if ck, err := c.Cookie(signedOutCookieName); err != nil || ck.Value == "" {
+		return false
+	}
+	a.clearCookie(c, signedOutCookieName)
+	return true
 }
 
 // Me reports the current session, so the SPA can decide what to render. It
@@ -311,8 +339,15 @@ func (a *Authenticator) Logout(c echo.Context) error {
 func (a *Authenticator) Me(c echo.Context) error {
 	session, ok := a.Load(c)
 	if !ok {
-		return c.JSON(http.StatusUnauthorized, map[string]any{"authenticated": false})
+		body := map[string]any{"authenticated": false}
+		if a.takeSignOutMarker(c) {
+			// The person signed out on purpose, so the SPA may sign in again
+			// at once instead of waiting out its loop guard.
+			body["signed_out"] = true
+		}
+		return c.JSON(http.StatusUnauthorized, body)
 	}
+	a.takeSignOutMarker(c)
 	return c.JSON(http.StatusOK, map[string]any{
 		"authenticated": true,
 		"subject":       session.Subject,

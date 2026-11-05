@@ -56,7 +56,8 @@ const fetchPanelConfig = async (): Promise<IPanelConfigResponse> => {
 
 /**
  * Reads the current OIDC session. A 401 is the ordinary "not signed in" state
- * and resolves to `{ authenticated: false }` rather than throwing.
+ * and resolves to `{ authenticated: false }` rather than throwing, with
+ * `signed_out` when the server says the person just signed out.
  */
 const fetchPanelSession = async (): Promise<IPanelSessionResponse> => {
   let res: Response
@@ -67,7 +68,14 @@ const fetchPanelSession = async (): Promise<IPanelSessionResponse> => {
     throw new PanelRequestError(`session unreachable: ${String(cause)}`, 0)
   }
 
-  if (res.status === 401) return { authenticated: false }
+  if (res.status === 401) {
+    const body = (await res.json().catch(() => null)) as {
+      signed_out?: unknown
+    } | null
+    return body?.signed_out === true
+      ? { authenticated: false, signed_out: true }
+      : { authenticated: false }
+  }
   if (!res.ok)
     throw new PanelRequestError(
       `session unavailable: ${res.status}`,

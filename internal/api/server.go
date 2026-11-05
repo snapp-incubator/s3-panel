@@ -128,6 +128,9 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 		s.auth.Logger = s.logger
 		s.auth.ResolveAdmin = s.control.RealIsAdmin
 		s.auth.OnLogout = s.revokeOnLogout
+		// Part of a console, the SPA signs in silently; an explicit sign-out
+		// must not hold the next one back (see auth.Authenticator.MarkSignOut).
+		s.auth.MarkSignOut = s.Config.Panel.Enabled
 	}
 	s.credentials = newCredentialCache(ctx)
 

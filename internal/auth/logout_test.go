@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,4 +134,79 @@ func TestLogoutIsPOSTOnly(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET /auth/logout = %d, want 405", rec.Code)
 	}
+}
+
+// TestSignOutMarkerLetsTheNextSilentSignInThrough: part of a console, an
+// explicit sign-out leaves a marker the next /auth/me reports once and clears,
+// so the SPA's loop guard does not hold back the sign-in that follows. A
+// sign-in that does not stick never passes through Logout, so the guard still
+// stops a real loop.
+func TestSignOutMarkerLetsTheNextSilentSignInThrough(t *testing.T) {
+	a := newLogoutAuthenticator(t)
+	a.BasePath = "/storage"
+	a.MarkSignOut = true
+
+	rec := logoutRequest(t, a, Session{
+		Subject: "u-alice", AccessToken: "tok",
+		ExpiresAt: time.Now().Add(time.Hour), SessionExpiresAt: time.Now().Add(time.Hour),
+	})
+	marker := findCookie(rec, signedOutCookieName)
+	if marker == nil || marker.Value == "" || marker.MaxAge <= 0 {
+		t.Fatalf("sign-out left no marker: %+v", marker)
+	}
+	if marker.Path != "/storage" || !marker.HttpOnly {
+		t.Errorf("marker path=%q httpOnly=%v, want /storage and HttpOnly", marker.Path, marker.HttpOnly)
+	}
+
+	// The next visit hears it once, and the marker is cleared.
+	body, rec := meRequest(t, a, marker)
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(body, `"signed_out":true`) {
+		t.Fatalf("/auth/me after sign-out = %d %s, want 401 with signed_out", rec.Code, body)
+	}
+	if c := findCookie(rec, signedOutCookieName); c == nil || c.MaxAge >= 0 {
+		t.Errorf("/auth/me did not clear the marker: %+v", c)
+	}
+
+	// Without the marker (the sign-in did not stick), nothing is said.
+	body, _ = meRequest(t, a, nil)
+	if strings.Contains(body, "signed_out") {
+		t.Errorf("/auth/me without a marker = %s", body)
+	}
+}
+
+// TestNoSignOutMarkerByDefault: outside a console, sign-out sets nothing new.
+func TestNoSignOutMarkerByDefault(t *testing.T) {
+	a := newLogoutAuthenticator(t)
+	rec := logoutRequest(t, a, Session{
+		Subject: "u-alice", AccessToken: "tok",
+		ExpiresAt: time.Now().Add(time.Hour), SessionExpiresAt: time.Now().Add(time.Hour),
+	})
+	if c := findCookie(rec, signedOutCookieName); c != nil {
+		t.Errorf("standalone sign-out set a marker: %+v", c)
+	}
+	if body, _ := meRequest(t, a, nil); body != `{"authenticated":false}` {
+		t.Errorf("/auth/me = %s, want the unchanged answer", body)
+	}
+}
+
+func findCookie(rec *httptest.ResponseRecorder, name string) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == name {
+			return c
+		}
+	}
+	return nil
+}
+
+func meRequest(t *testing.T, a *Authenticator, cookie *http.Cookie) (string, *httptest.ResponseRecorder) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	if cookie != nil {
+		req.AddCookie(&http.Cookie{Name: cookie.Name, Value: cookie.Value})
+	}
+	rec := httptest.NewRecorder()
+	if err := a.Me(echo.New().NewContext(req, rec)); err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	return strings.TrimSpace(rec.Body.String()), rec
 }
