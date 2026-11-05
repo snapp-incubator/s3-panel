@@ -11,11 +11,18 @@ import type { ISignInSearch } from '@/router/search'
 
 const AUTO_SIGN_IN_MS = 30_000
 
-/** Reports whether an automatic sign-in may start now, and records that it did. */
-const claimAutoSignIn = (): boolean => {
+/**
+ * Reports whether an automatic sign-in may start now, and records that it did.
+ * `afterSignOut` (the server saw an explicit sign-out) skips the wait: coming
+ * back after signing out is not a sign-in that failed to stick.
+ */
+const claimAutoSignIn = (afterSignOut: boolean): boolean => {
   const key = storageKey('panel-auto-sign-in')
   try {
-    if (Date.now() - Number(sessionStorage.getItem(key) ?? 0) < AUTO_SIGN_IN_MS)
+    if (
+      !afterSignOut &&
+      Date.now() - Number(sessionStorage.getItem(key) ?? 0) < AUTO_SIGN_IN_MS
+    )
       return false
     sessionStorage.setItem(key, String(Date.now()))
     return true
@@ -34,16 +41,21 @@ const claimAutoSignIn = (): boolean => {
 const OIDCLogin = () => {
   const loginUrl = usePanelSession(state => state.loginUrl)
   const inConsole = usePanelSession(state => state.panel !== null)
+  const afterSignOut = usePanelSession(
+    state => state.session?.signed_out === true
+  )
   const { next } = useSearch({ strict: false }) as ISignInSearch
 
   // Part of a console, the person signed in once for every app: going straight
   // to the provider is a silent round trip while that sign-in lives. Once per
   // AUTO_SIGN_IN_MS, so a sign-in that does not stick (a cookie the browser
-  // refuses, say) leaves the button here instead of looping.
+  // refuses, say) leaves the button here instead of looping. An explicit
+  // sign-out is not that: the server reports it once, and the next sign-in
+  // goes ahead at once.
   useEffect(() => {
-    if (inConsole && claimAutoSignIn())
+    if (inConsole && claimAutoSignIn(afterSignOut))
       window.location.href = panelLoginUrl(loginUrl, next)
-  }, [inConsole, loginUrl, next])
+  }, [inConsole, afterSignOut, loginUrl, next])
 
   return (
     <div className="flex w-full flex-col items-center gap-6 py-12">

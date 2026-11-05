@@ -38,6 +38,11 @@ export interface IPanelConsole {
 
 export interface IPanelSessionResponse {
   authenticated: boolean
+  /**
+   * Not signed in because the person just signed out on purpose; reported once.
+   * Lets the console's silent sign-in run again without waiting out its guard.
+   */
+  signed_out?: boolean
   subject?: string
   email?: string
   name?: string
