@@ -13,5 +13,5 @@ export default i18next.init({
 })
 
 export const t = (key: string, options?: TOptions) => {
-  return i18next.t(key, options).toString()
+  return (options ? i18next.t(key, options) : i18next.t(key)).toString()
 }
