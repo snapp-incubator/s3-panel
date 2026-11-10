@@ -17,7 +17,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@hookform/resolvers": "^7.0.2",
+    "@hookform/resolvers": "^7.0.3",
     "@radix-ui/react-accordion": "^1.3.1",
     "@radix-ui/react-checkbox": "^1.4.1",
     "@radix-ui/react-dialog": "^1.3.1",
@@ -33,9 +33,9 @@
     "@radix-ui/react-toggle": "^1.2.1",
     "@radix-ui/react-toggle-group": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.4.1",
-    "@sentry/react": "^11.10.0",
-    "@sentry/vite-plugin": "^11.10.0",
-    "@tanstack/react-query": "^5.105.3",
+    "@sentry/react": "^11.11.0",
+    "@sentry/vite-plugin": "^11.11.0",
+    "@tanstack/react-query": "^5.107.1",
     "@tanstack/react-router": "^1.170.46",
     "@tanstack/react-table": "^9.3.1",
     "@tanstack/router-devtools": "^1.167.2",
@@ -44,10 +44,10 @@
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",
     "dayjs": "^1.11.23",
-    "framer-motion": "^14.9.0",
-    "i18next": "^26.7.1",
+    "framer-motion": "^14.10.1",
+    "i18next": "^26.7.2",
     "jalaliday": "^3.1.1",
-    "lucide-react": "^1.67.0",
+    "lucide-react": "^1.70.0",
     "next-themes": "^0.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -58,12 +58,12 @@
     "tailwindcss-animate": "^1.0.7",
     "vite-plugin-package-version": "^1.1.0",
     "zod": "^4.6.7",
-    "zustand": "^5.0.16"
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.4",
-    "@playwright/test": "^1.64.1",
-    "@tailwindcss/postcss": "^4.3.4",
+    "@biomejs/biome": "2.6.6",
+    "@playwright/test": "^1.65.0",
+    "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
@@ -71,9 +71,9 @@
     "dotenv": "^18.0.9",
     "postcss": "^8.5.32",
     "swagger-typescript-api": "^13.13.0",
-    "tailwindcss": "^4.3.4",
+    "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
-    "vite": "^8.3.5",
+    "vite": "^8.3.6",
     "vite-bundle-visualizer": "^1.2.1"
   }
 }
