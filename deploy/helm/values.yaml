@@ -67,6 +67,16 @@ snapp-object-store:
     # Its own host, and requests with no Origin (scripts), are always accepted.
     trusted_origins: []
 
+    # Share links.
+    share:
+      # The longest a share link may live, as a Go duration ("15m", "24h").
+      # Empty (or "0") adds no cap of its own: links last as long as asked —
+      # and, in iam mode, no longer than the session credential that signs
+      # them, which always caps them. The share dialog offers only durations
+      # within the cap. Set it short on an instance pointed at storage whose
+      # links should not live long, e.g. staging reading production.
+      max_duration: ""
+
     # --- A unified console (optional, off by default) ------------------------
     #
     # Join a console serving several apps on one host, each at its own path

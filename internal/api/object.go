@@ -397,9 +397,10 @@ func (s *Server) HandleObjectHead() echo.HandlerFunc {
 //	@Param			bucket		query		string								true	"bucket name"
 //	@Param			object		query		string								true	"objects name"
 //	@Param			expiration	query		string								false	"URL expiration time"	default(1h)
-//	@Success		200			{object}	storage.ObjectShareResponse	"Successful response with object url"
+//	@Success		200			{object}	storage.ObjectShareResponse	"The link, and when it stops working (the effective expiry, after every cap)"
 //	@Failure		400			{object}	storage.OperationErrWithMsg	"Bad Request"
 //	@Failure		401			{object}	string								"Unauthorized"
+//	@Failure		409			{object}	storage.OperationErrWithMsg	"The credential is about to expire"
 //	@Failure		422			{object}	storage.OperationErrWithMsg	"Action didn't complete"
 //	@Failure		500			{object}	storage.OperationErrWithMsg	"Internal server error"
 //	@Router			/api/object/share [post]
@@ -435,36 +436,82 @@ func (s *Server) HandleObjectShare() echo.HandlerFunc {
 		}
 
 		// Set after binding, so the cap is the server's and not something a
-		// caller can raise by sending the field itself.
-		req.MaxExpiration = shareExpiryCap(c)
+		// caller can raise by sending the field itself. A request for longer is
+		// signed for the cap, and the answer says so: expires_at is the expiry
+		// the link was actually signed with.
+		req.MaxExpiration = shareExpiryCap(c, s.Config.Share.MaxDuration)
 		if req.MaxExpiration < 0 {
-			return c.JSON(http.StatusConflict, storage.OperationErrWithMsg{
-				Message: "the storage credential for this request is about to expire; retry the share"})
+			return c.JSON(http.StatusConflict, storage.OperationErrWithMsg{Message: shareCredentialLapsed})
 		}
 
-		url, errObjShare := s.store.ObjectShare(s.gatewayConfig(c), req)
+		share, errObjShare := s.store.ObjectShare(s.gatewayConfig(c), req)
 		if errObjShare.Message != nil {
 			s.logger.Error(errObjShare.Message.Error())
 			return c.JSON(errObjShare.Code, storage.OperationErrWithMsg{Message: errObjShare.Message.Error()})
 		}
-		return c.JSON(http.StatusOK, url)
+		share.SessionBound = s.shareIsSessionBound()
+		return c.JSON(http.StatusOK, share)
 	}
 }
 
-// shareExpiryCap is the longest a share link may live: what remains of the
-// credential that will sign it.
+// HandleObjectShareLimit
+//
+//	@Summary		the longest share link that can be created for a bucket
+//	@Description	Reports the longest a share link for an object in this bucket may live right now: the least of what remains of the credential that would sign it (iam mode) and share.max_duration. max_seconds 0 means nothing caps it. session_bound reports that a link would also stop working when the person signs out.
+//	@Tags			Object
+//	@Produce		json
+//	@Param			bucket	query		string								true	"bucket name"
+//	@Success		200		{object}	storage.ObjectShareLimitResponse	"The longest share link allowed"
+//	@Failure		400		{object}	storage.OperationErrWithMsg			"Bad Request"
+//	@Failure		401		{object}	string								"Unauthorized"
+//	@Failure		409		{object}	storage.OperationErrWithMsg			"The credential is about to expire"
+//	@Router			/api/object/share/limit [get]
+func (s *Server) HandleObjectShareLimit() echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if c.QueryParam("bucket") == "" {
+			return c.JSON(http.StatusBadRequest, storage.OperationErrWithMsg{Message: "bucket is required"})
+		}
+		// The route carries the same permission and access level as /share, so
+		// the credential judged here is the cached one /share would sign with.
+		limit := shareExpiryCap(c, s.Config.Share.MaxDuration)
+		if limit < 0 {
+			return c.JSON(http.StatusConflict, storage.OperationErrWithMsg{Message: shareCredentialLapsed})
+		}
+		return c.JSON(http.StatusOK, storage.ObjectShareLimitResponse{
+			MaxSeconds:   int64(limit / time.Second),
+			SessionBound: s.shareIsSessionBound(),
+		})
+	}
+}
+
+const shareCredentialLapsed = "the storage credential for this request is about to expire; retry the share"
+
+// shareIsSessionBound reports that a share link is signed with the person's
+// session credential, which signing out revokes. In s3 mode it is signed with
+// the user's own long-lived keys, which the panel never revokes.
+func (s *Server) shareIsSessionBound() bool { return s.Config.Server.IsIAMMode() }
+
+// shareExpiryCap is the longest a share link may live: the least of what
+// remains of the credential that will sign it and configured
+// (share.max_duration; zero or less configures no cap).
 //
 // Zero when nothing caps it — s3 mode, where the link is signed with the user's
-// own long-lived keys. Negative when the credential has already lapsed, which
-// the handler reports rather than signing a URL that is dead on arrival.
-func shareExpiryCap(c echo.Context) time.Duration {
+// own long-lived keys, with no share.max_duration. Negative when the credential
+// has lapsed, or has less than a second left (a presigned URL's lifetime is in
+// whole seconds, so it could not be signed at all), which the handler reports
+// rather than signing a URL that is dead on arrival.
+func shareExpiryCap(c echo.Context, configured time.Duration) time.Duration {
+	limit := max(configured, 0)
 	expiresAt, ok := credentialExpiry(c)
 	if !ok {
-		return 0
+		return limit
 	}
 	remaining := time.Until(expiresAt)
-	if remaining <= 0 {
+	if remaining < time.Second {
 		return -1
 	}
-	return remaining
+	if limit == 0 || remaining < limit {
+		limit = remaining
+	}
+	return limit
 }

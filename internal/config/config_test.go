@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestProvideRegionEndpoints ensures the [server.region_endpoints] sub-table
@@ -102,5 +103,48 @@ path = "/storage/iam/buckets/{name}?region={region}"
 	}
 	if DefaultConfig().Panel.Enabled {
 		t.Error("the panel integration is on by default")
+	}
+}
+
+// TestProvideShareMaxDuration: the share cap is a Go duration from the file,
+// overridable from the environment, and absent by default.
+func TestProvideShareMaxDuration(t *testing.T) {
+	if got := DefaultConfig().Share.MaxDuration; got != 0 {
+		t.Fatalf("default share.max_duration = %v, want 0 (no cap)", got)
+	}
+
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.toml")
+	if err := os.WriteFile(empty, []byte("[server]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := Provide(empty).Share.MaxDuration; got != 0 {
+		t.Errorf("unset share.max_duration = %v, want 0", got)
+	}
+
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[share]\nmax_duration = \"30m\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := Provide(path).Share.MaxDuration; got != 30*time.Minute {
+		t.Errorf("share.max_duration from file = %v, want 30m", got)
+	}
+
+	t.Setenv("s3panel_share__max_duration", "2h")
+	if got := Provide(path).Share.MaxDuration; got != 2*time.Hour {
+		t.Errorf("share.max_duration from env = %v, want 2h", got)
+	}
+}
+
+func TestShareConfigValidate(t *testing.T) {
+	for _, ok := range []time.Duration{0, time.Minute, 15 * time.Minute, 14 * 24 * time.Hour} {
+		if err := (ShareConfig{MaxDuration: ok}).Validate(); err != nil {
+			t.Errorf("Validate(%v) = %v, want nil", ok, err)
+		}
+	}
+	for _, bad := range []time.Duration{-time.Minute, time.Nanosecond, 30 * time.Second} {
+		if err := (ShareConfig{MaxDuration: bad}).Validate(); err == nil {
+			t.Errorf("Validate(%v) = nil, want an error", bad)
+		}
 	}
 }

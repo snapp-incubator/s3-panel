@@ -26,6 +26,7 @@ type Config struct {
 	ObjectStorage ObjectStorageConfig `json:"object_storage_config" koanf:"object_storage_config"`
 	OIDC          OIDCConfig          `json:"oidc,omitempty"        koanf:"oidc"`
 	Panel         PanelConfig         `json:"panel"                 koanf:"panel"`
+	Share         ShareConfig         `json:"share"                 koanf:"share"`
 }
 
 func Provide(configPath string) Config {
@@ -59,6 +60,9 @@ func Provide(configPath string) Config {
 	var instance Config
 	if err := k.Unmarshal("", &instance); err != nil {
 		log.Fatalf("error unmarshalling config: %s", err)
+	}
+	if err := instance.Share.Validate(); err != nil {
+		log.Fatalf("invalid config: %s", err)
 	}
 
 	indent, err := json.MarshalIndent(redacted(instance), "", "\t")

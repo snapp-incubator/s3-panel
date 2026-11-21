@@ -43,5 +43,8 @@ func DefaultConfig() Config {
 		Cors:          serverCorsConfig,
 		ObjectStorage: ObjectStorageConfig{},
 		OIDC:          oidcConfig,
+		// No cap of its own: a share link lives as long as asked (and, in iam
+		// mode, at most as long as the credential that signs it).
+		Share: ShareConfig{MaxDuration: 0},
 	}
 }

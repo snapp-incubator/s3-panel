@@ -50,6 +50,11 @@ data:
 {{- if .Values.config.iam_api_url }}
     iam_api_url = {{ .Values.config.iam_api_url | quote }}
 {{- end }}
+{{- with (dig "share" "max_duration" "" .Values.config) }}
+
+    [share]
+    max_duration = {{ . | quote }}
+{{- end }}
 {{- if eq (.Values.config.auth_mode | default "s3") "iam" }}
 
     [oidc]

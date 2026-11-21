@@ -1,4 +1,3 @@
-import CopyAddress from '@/components/copy-address'
 import { Button } from '@/components/shadcn/button'
 import {
   Dialog,
@@ -10,9 +9,11 @@ import {
   DialogTrigger
 } from '@/components/shadcn/dialog'
 import { ToggleGroup, ToggleGroupItem } from '@/components/shadcn/toggle-group'
-import { expirationItems } from '@/constants/s3/shareLink'
+import { formatShareDuration } from '@/constants/s3/shareLink'
 import useCreateShareLink from '@/hooks/useCreateShareLink'
 import { t } from '@/i18n'
+
+import ShareCreated from './share-created'
 
 export interface IShareObjectProps {
   open: boolean
@@ -32,12 +33,21 @@ export default function ShareObject({
 }: IShareObjectProps) {
   const {
     link,
+    expiresAt,
+    createdSessionBound,
     mutate,
+    isPending,
     copyAddress,
     setCopyAddress,
     expirationTime,
-    setExpirationTime
+    setExpirationTime,
+    options,
+    limitPending,
+    maxSeconds,
+    capped,
+    sessionBound
   } = useCreateShareLink({
+    open,
     bucket,
     object,
     region,
@@ -54,24 +64,54 @@ export default function ShareObject({
           </DialogHeader>
           <p className="text-base">{t('share_object_subtitle')}</p>
           <span className="text-base">{`${t('expiration_time')}:`}</span>
-          <ToggleGroup type="single">
-            {expirationItems.map(item => {
-              return (
-                <ToggleGroupItem
-                  value={item.value}
-                  key={item.value}
-                  onClick={() => setExpirationTime(item.value)}
-                >
-                  <span className="text-xs">{item.title}</span>
-                </ToggleGroupItem>
-              )
-            })}
-          </ToggleGroup>
+          {limitPending ? (
+            <p className="text-sm text-muted-foreground">
+              {t('share_limit_loading')}
+            </p>
+          ) : options.length === 0 ? (
+            <p data-test="share-no-duration" className="text-sm">
+              {t('share_no_duration_available')}
+            </p>
+          ) : (
+            <ToggleGroup
+              type="single"
+              className="flex-wrap"
+              aria-label={t('expiration_time')}
+              value={expirationTime ?? ''}
+              onValueChange={value => setExpirationTime(value || null)}
+            >
+              {options.map(item => {
+                return (
+                  <ToggleGroupItem value={item.value} key={item.value}>
+                    <span className="text-xs">{item.title}</span>
+                  </ToggleGroupItem>
+                )
+              })}
+            </ToggleGroup>
+          )}
+          {!limitPending && capped && options.length > 0 ? (
+            <p
+              data-test="share-expiry-capped"
+              className="text-sm text-muted-foreground"
+            >
+              {t('share_expiry_capped', {
+                duration: formatShareDuration(maxSeconds)
+              })}
+            </p>
+          ) : null}
+          {sessionBound ? (
+            <p
+              data-test="share-session-warning"
+              className="text-sm text-muted-foreground"
+            >
+              {t('share_session_bound_warning')}
+            </p>
+          ) : null}
           <DialogFooter className="mt-6">
             <div className="flex w-full justify-center gap-4">
               <Button
                 className="bg-green-700"
-                disabled={!expirationTime}
+                disabled={!expirationTime || isPending || limitPending}
                 onClick={() => mutate()}
               >
                 {t('create_link')}
@@ -85,11 +125,11 @@ export default function ShareObject({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <CopyAddress
+      <ShareCreated
         open={copyAddress}
-        title={t('share_address_title')}
-        description={t('share_address_description')}
-        link={link!}
+        link={link ?? ''}
+        expiresAt={expiresAt}
+        sessionBound={createdSessionBound}
         closeHandler={() => setCopyAddress(false)}
       />
     </>

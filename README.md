@@ -49,6 +49,12 @@ Bucket creation and per-user quota are unavailable in `iam` mode — a minted
 credential belongs to no tenant, and a user has no single gateway account to
 carry a quota. See `configs/sample-config.toml` for the full configuration.
 
+Share links in `iam` mode are presigned with the person's short-lived session
+credential, so a link ends when that credential does — and when they sign out,
+which revokes it. The share dialog offers only durations that will hold, and
+shows when the link it made stops working. `share.max_duration` caps links
+further in either mode (unset: no extra cap).
+
 This is a monorepo:
 
 - **Backend** (`cmd/`, `internal/`) — a Go HTTP API in front of the Ceph RADOS Gateway.

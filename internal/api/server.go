@@ -460,6 +460,11 @@ func (s *Server) registerAPIGroup(prefix string) {
 		// POST, not GET: minting a link is an action, and a GET can be triggered
 		// by any page that embeds an image tag pointing here.
 		apiRoutesObjects.POST("/share", s.HandleObjectShare(), s.gatewayChain(permRead, mutating)...)
+		// How long a share link may live, so the dialog offers only durations
+		// that will hold. Only reads, so not refused when read-only. The same
+		// permission as /share, hence the same access level and the same cached
+		// credential: what remains of it is the cap /share applies.
+		apiRoutesObjects.GET("/share/limit", s.HandleObjectShareLimit(), s.gatewayChain(permRead, reading)...)
 	}
 
 	apiRoutesUsers := apiRoutes.Group("/user", region)
