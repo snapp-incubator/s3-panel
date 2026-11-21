@@ -173,48 +173,78 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/bucket/list": {
+        "/api/bucket/detail": {
             "get": {
-                "description": "Fetches list of buckets owned by a user that is specified by AccessKey and SecretKey",
-                "consumes": [
-                    "application/json"
-                ],
+                "description": "Object count, size, quota and bucket policy for one bucket. Requires server.auth_mode = \"iam\".",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "Bucket"
                 ],
-                "summary": "List of buckets of a user",
+                "summary": "Bucket detail: usage and policy",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "User given AccessKey",
-                        "name": "access_key",
-                        "in": "header",
+                        "description": "bucket identifier as returned by /bucket/list",
+                        "name": "bucket",
+                        "in": "query",
                         "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Bucket detail",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.IAMBucketDetailResponse"
+                        }
                     },
+                    "401": {
+                        "description": "Not signed in",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    },
+                    "404": {
+                        "description": "No such bucket, or not accessible",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/bucket/list": {
+            "get": {
+                "description": "Asks the control endpoint which buckets the caller can use, across every region, with the permissions they hold on each. Requires server.auth_mode = \"iam\".",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Bucket"
+                ],
+                "summary": "List the buckets the signed-in user may access",
+                "parameters": [
                     {
                         "type": "string",
-                        "description": "User given SecretKey",
-                        "name": "secret_key",
-                        "in": "header",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "search by given string, could be empty",
+                        "description": "filter by substring",
                         "name": "search_string",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "max keys in a page",
+                        "description": "only buckets in this region",
+                        "name": "region",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "page size",
                         "name": "max_keys",
                         "in": "query"
                     },
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "page number",
                         "name": "page",
                         "in": "query"
@@ -222,31 +252,19 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Successful response with bucket list",
+                        "description": "Buckets the caller may access",
                         "schema": {
-                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.BucketListResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                            "$ref": "#/definitions/internal_api.IAMBucketListResponse"
                         }
                     },
                     "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "422": {
-                        "description": "Action didn't complete",
+                        "description": "Not signed in",
                         "schema": {
                             "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
                         }
                     },
-                    "500": {
-                        "description": "Internal server error",
+                    "502": {
+                        "description": "Control endpoint unavailable",
                         "schema": {
                             "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
                         }
@@ -330,6 +348,26 @@ const docTemplate = `{
                         "description": "Internal server error",
                         "schema": {
                             "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/config": {
+            "get": {
+                "description": "Reports which authentication mode this instance runs, so a client knows whether to present a credential form or an OIDC sign-in.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Config"
+                ],
+                "summary": "Panel configuration",
+                "responses": {
+                    "200": {
+                        "description": "Panel configuration",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.ConfigResponse"
                         }
                     }
                 }
@@ -624,17 +662,21 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "page of pagination",
+                        "description": "page number; without continuation_token, page N is reached by skipping N-1 pages",
                         "name": "page",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "next_continuation_token from the previous page",
+                        "name": "continuation_token",
+                        "in": "query"
                     },
                     {
                         "type": "string",
                         "description": "search by given string, could be empty",
                         "name": "search_string",
-                        "in": "query",
-                        "required": true
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -723,7 +765,7 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "200": {
-                        "description": "Successful response with object url",
+                        "description": "The link, and when it stops working (the effective expiry, after every cap)",
                         "schema": {
                             "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.ObjectShareResponse"
                         }
@@ -740,6 +782,12 @@ const docTemplate = `{
                             "type": "string"
                         }
                     },
+                    "409": {
+                        "description": "The credential is about to expire",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    },
                     "422": {
                         "description": "Action didn't complete",
                         "schema": {
@@ -748,6 +796,53 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/object/share/limit": {
+            "get": {
+                "description": "Reports the longest a share link for an object in this bucket may live right now: the least of what remains of the credential that would sign it (iam mode) and share.max_duration. max_seconds 0 means nothing caps it. session_bound reports that a link would also stop working when the person signs out.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Object"
+                ],
+                "summary": "the longest share link that can be created for a bucket",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "bucket name",
+                        "name": "bucket",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "The longest share link allowed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.ObjectShareLimitResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "409": {
+                        "description": "The credential is about to expire",
                         "schema": {
                             "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.OperationErrWithMsg"
                         }
@@ -948,6 +1043,26 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/regions": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "region"
+                ],
+                "summary": "List selectable regions",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1031,6 +1146,9 @@ const docTemplate = `{
         "github_com_snapp-incubator_S3-Panel_internal_storage.ObjectListBody": {
             "type": "object",
             "properties": {
+                "is_folder": {
+                    "type": "boolean"
+                },
                 "last_modified_timestamp": {
                     "type": "string"
                 },
@@ -1048,11 +1166,19 @@ const docTemplate = `{
         "github_com_snapp-incubator_S3-Panel_internal_storage.ObjectListResponse": {
             "type": "object",
             "properties": {
+                "is_truncated": {
+                    "description": "IsTruncated reports that the listing continues past this page.",
+                    "type": "boolean"
+                },
                 "items": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_snapp-incubator_S3-Panel_internal_storage.ObjectListBody"
                     }
+                },
+                "next_continuation_token": {
+                    "description": "NextContinuationToken resumes the listing after this page. Empty on the\nlast page.",
+                    "type": "string"
                 },
                 "total_matched_items": {
                     "type": "integer"
@@ -1062,9 +1188,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_snapp-incubator_S3-Panel_internal_storage.ObjectShareLimitResponse": {
+            "type": "object",
+            "properties": {
+                "max_seconds": {
+                    "description": "MaxSeconds is the longest a link may live: the least of what remains of\nthe credential that would sign it and share.max_duration. Zero means no\ncap applies.",
+                    "type": "integer"
+                },
+                "session_bound": {
+                    "description": "SessionBound reports that a link would be signed with the person's\nsession credential (iam mode), so it would also stop working when they\nsign out.",
+                    "type": "boolean"
+                }
+            }
+        },
         "github_com_snapp-incubator_S3-Panel_internal_storage.ObjectShareResponse": {
             "type": "object",
             "properties": {
+                "expires_at": {
+                    "description": "ExpiresAt is when the link stops working, as signed into it (RFC 3339,\nUTC). It is the EFFECTIVE expiry, after every cap — not the one asked for.",
+                    "type": "string"
+                },
+                "expires_in_seconds": {
+                    "description": "ExpiresInSeconds is how long the link was signed for.",
+                    "type": "integer"
+                },
+                "session_bound": {
+                    "description": "SessionBound reports that the link is signed with the person's session\ncredential (iam mode), so it also stops working when they sign out.",
+                    "type": "boolean"
+                },
                 "url": {
                     "type": "string"
                 }
@@ -1185,6 +1336,219 @@ const docTemplate = `{
                 },
                 "used_objects": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.ConfigResponse": {
+            "type": "object",
+            "properties": {
+                "auth_mode": {
+                    "description": "AuthMode is \"s3\" or \"iam\".",
+                    "type": "string"
+                },
+                "iam_console_url": {
+                    "description": "IAMConsoleURL is where bucket cards link to manage access. Only reported\nin iam mode, and empty when the deployment has not configured it.",
+                    "type": "string"
+                },
+                "login_url": {
+                    "description": "LoginURL is where the browser should go to start a login, base path\nincluded. Empty in s3 mode, where the user types credentials into the\npanel instead.",
+                    "type": "string"
+                },
+                "panel": {
+                    "description": "Panel is set only when the panel is part of a unified console\n(panel.enabled), and tells the SPA to make room for the console's header.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.PanelInfo"
+                        }
+                    ]
+                },
+                "read_only": {
+                    "description": "ReadOnly reports that every mutating operation is refused, so the UI can\nhide the controls rather than offer actions that will 403.",
+                    "type": "boolean"
+                },
+                "region": {
+                    "description": "Region is the region this instance serves directly.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.IAMBucketDetailResponse": {
+            "type": "object",
+            "properties": {
+                "bucket": {
+                    "description": "Bucket is the identifier every other panel call takes.",
+                    "type": "string"
+                },
+                "can_delete": {
+                    "type": "boolean"
+                },
+                "can_read": {
+                    "type": "boolean"
+                },
+                "can_write": {
+                    "type": "boolean"
+                },
+                "display_name": {
+                    "description": "DisplayName is the bare bucket name, for the UI.",
+                    "type": "string"
+                },
+                "granted_via": {
+                    "description": "GrantedVia names the team the access came from, when it was inherited.",
+                    "type": "string"
+                },
+                "num_objects": {
+                    "description": "NumObjects and SizeBytes come from the storage backend's admin API; S3 has\nno verb that reports either.",
+                    "type": "integer"
+                },
+                "permissions": {
+                    "description": "Permissions are what the caller may do, e.g. read, write, owner.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "policy": {
+                    "description": "Policy is the bucket policy document, null when the bucket has none."
+                },
+                "policy_denied": {
+                    "type": "boolean"
+                },
+                "policy_present": {
+                    "description": "PolicyPresent distinguishes \"no policy\" from \"not allowed to read it\":\nreading a policy takes more than read access, and the page shows the rest\nof the bucket either way.",
+                    "type": "boolean"
+                },
+                "quota_bytes": {
+                    "type": "integer"
+                },
+                "quota_objects": {
+                    "type": "integer"
+                },
+                "region": {
+                    "type": "string"
+                },
+                "resource_id": {
+                    "description": "ResourceID is the bucket's IAM resource ID, for linking to its page in the\nIAM console. Empty when the control endpoint does not report one.",
+                    "type": "string"
+                },
+                "s3_name": {
+                    "description": "S3Name is how the gateway addresses this bucket on its own S3 endpoint,\nwhich for a tenanted bucket is not the same string as Bucket.",
+                    "type": "string"
+                },
+                "size_bytes": {
+                    "type": "integer"
+                },
+                "tenant": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.IAMBucketItem": {
+            "type": "object",
+            "properties": {
+                "bucket": {
+                    "description": "Bucket is the identifier every other panel call takes.",
+                    "type": "string"
+                },
+                "can_delete": {
+                    "type": "boolean"
+                },
+                "can_read": {
+                    "type": "boolean"
+                },
+                "can_write": {
+                    "type": "boolean"
+                },
+                "display_name": {
+                    "description": "DisplayName is the bare bucket name, for the UI.",
+                    "type": "string"
+                },
+                "granted_via": {
+                    "description": "GrantedVia names the team the access came from, when it was inherited.",
+                    "type": "string"
+                },
+                "permissions": {
+                    "description": "Permissions are what the caller may do, e.g. read, write, owner.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "region": {
+                    "type": "string"
+                },
+                "resource_id": {
+                    "description": "ResourceID is the bucket's IAM resource ID, for linking to its page in the\nIAM console. Empty when the control endpoint does not report one.",
+                    "type": "string"
+                },
+                "s3_name": {
+                    "description": "S3Name is how the gateway addresses this bucket on its own S3 endpoint,\nwhich for a tenanted bucket is not the same string as Bucket.",
+                    "type": "string"
+                },
+                "tenant": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.IAMBucketListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.IAMBucketItem"
+                    }
+                },
+                "regions": {
+                    "description": "Regions is every region the caller has buckets in, whatever the listing\nwas filtered by.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "total_buckets": {
+                    "type": "integer"
+                },
+                "total_pages": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.IAMUserIdentificationResponse": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "groups": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "is_admin": {
+                    "type": "boolean"
+                },
+                "userID": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.PanelInfo": {
+            "type": "object",
+            "properties": {
+                "app_key": {
+                    "description": "AppKey is this app's key in the console.",
+                    "type": "string"
+                },
+                "home_url": {
+                    "description": "HomeURL and SignOutURL are the console's home and sign-out pages.",
+                    "type": "string"
+                },
+                "signout_url": {
+                    "type": "string"
                 }
             }
         }
