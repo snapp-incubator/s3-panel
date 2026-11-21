@@ -58,25 +58,28 @@ const GlobalUploadProgress = () => {
     <div className="fixed bottom-0 right-0 z-50 w-full max-w-md bg-background shadow-lg">
       <div className="flex items-center justify-center rounded-t-xl bg-[#1a1c20] px-4 py-2 text-white">
         <h4 className="mb-2 mr-auto font-semibold">{t('upload')}</h4>
-        <Button variant="link" size="icon">
+        <Button
+          variant="link"
+          size="icon"
+          aria-label={
+            showModalContent ? t('collapse_uploads') : t('expand_uploads')
+          }
+          aria-expanded={showModalContent}
+          onClick={() => setShowModalContent(shown => !shown)}
+        >
           {showModalContent ? (
-            <ChevronDown
-              className="size-6 text-white"
-              onClick={() => setShowModalContent(false)}
-            />
+            <ChevronDown aria-hidden="true" className="size-6 text-white" />
           ) : (
-            <ChevronUp
-              className="size-6 text-white"
-              onClick={() => setShowModalContent(true)}
-            />
+            <ChevronUp aria-hidden="true" className="size-6 text-white" />
           )}
         </Button>
         <Button
           variant="link"
           size="icon"
+          aria-label={t('close_uploads')}
           onClick={() => setShowUploadModal(false)}
         >
-          <X className="size-6 text-white" />
+          <X aria-hidden="true" className="size-6 text-white" />
         </Button>
       </div>
       {showModalContent

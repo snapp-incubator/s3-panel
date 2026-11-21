@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { deleteBucketApi } from '@/api/s3'
 import { bucketsKeys } from '@/api/s3Keys'
 import { t } from '@/i18n'
+import { errorToastContent } from '@/lib/requestError'
 import { queryClient } from '@/services/http/query-client'
 
 import type { HTTPClientError } from '../services/http/interceptorsConfig'
@@ -26,7 +27,7 @@ const useDeleteBucket = () => {
     onError: (err: HTTPClientError<{ message?: string }>) => {
       toast({
         variant: 'destructive',
-        title: err.response?.data.message || t('failed_delete_bucket')
+        ...errorToastContent(err, t('failed_delete_bucket'))
       })
     }
   })

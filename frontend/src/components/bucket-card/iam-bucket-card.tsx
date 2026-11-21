@@ -1,8 +1,8 @@
 import { useNavigate } from '@tanstack/react-router'
-import { Database, UserCog } from 'lucide-react'
+import { Database } from 'lucide-react'
 
+import ManageAccessLink from '@/components/manage-access-link'
 import { Button } from '@/components/shadcn/button'
-import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
 import type { IIAMBucket } from '@/types/s3/panel.types'
 
@@ -19,15 +19,6 @@ import RegionBadge from './region-badge'
  */
 const IAMBucketCard = (bucket: IIAMBucket) => {
   const navigate = useNavigate()
-  const iamConsoleUrl = usePanelSession(s => s.iamConsoleUrl)
-
-  // Who has access is managed in IAM, on the bucket's own resource page. The
-  // link is offered only when the deployment says where the console is and IAM
-  // reported the bucket's resource ID.
-  const manageAccessHref =
-    iamConsoleUrl && bucket.resource_id
-      ? `${iamConsoleUrl}/resources/${encodeURIComponent(bucket.resource_id)}`
-      : null
 
   // The region travels with the bucket: the same name can exist in two regions,
   // and every call made for this bucket has to say which one it means.
@@ -71,25 +62,12 @@ const IAMBucketCard = (bucket: IIAMBucket) => {
           </div>
         </div>
 
-        {manageAccessHref ? (
-          <Button
-            asChild
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 gap-1 px-2 text-xs text-muted-foreground"
-          >
-            <a
-              href={manageAccessHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={t('manage_access_hint')}
-              data-test="bucket-manage-access-link"
-            >
-              <UserCog className="size-3.5" />
-              {t('manage_access')}
-            </a>
-          </Button>
-        ) : null}
+        {/* Who has access is managed in IAM, on the bucket's own page. */}
+        <ManageAccessLink
+          resourceId={bucket.resource_id}
+          className="h-7 px-2 text-xs"
+          data-test="bucket-manage-access-link"
+        />
       </div>
 
       <PermissionBadges

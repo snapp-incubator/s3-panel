@@ -12,6 +12,7 @@ import {
 import { Progress } from '@/components/shadcn/progress'
 import { useToast } from '@/hooks/use-toast'
 import useDeleteBucket from '@/hooks/useDeleteBucket'
+import usePanelSession from '@/hooks/usePanelSession'
 import useS3Credentials from '@/hooks/useS3Credentials'
 import { t } from '@/i18n'
 import { calculateValue, copyString, timeAgo } from '@/lib/utils'
@@ -40,6 +41,7 @@ const BucketCard = (bucket: TBucketResponse) => {
   const navigate = useNavigate()
   // s3 mode lists one region at a time: the one these credentials signed in to.
   const region = useS3Credentials(state => state.region)
+  const readOnly = usePanelSession(state => state.readOnly)
 
   const storageLimited = bucket.quota_enabled && bucket.hard_bytes_raw > 0
   const pct = storageLimited
@@ -84,7 +86,9 @@ const BucketCard = (bucket: TBucketResponse) => {
             </p>
           </div>
         </div>
-        <BucketMenu bucket={bucket.bucket} />
+        {/* Its only item deletes the bucket, which a read-only deployment
+            refuses. */}
+        {readOnly ? null : <BucketMenu bucket={bucket.bucket} />}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -139,13 +143,15 @@ const CopyButton = ({ name }: { name: string }) => {
       variant="link"
       size="icon"
       className="size-6 shrink-0 text-muted-foreground hover:text-foreground"
+      aria-label={t('copy_bucket_name')}
+      title={t('copy_bucket_name')}
       onClick={() =>
         copyString(name).then(key =>
           toast({ title: `${key} copied`, variant: 'info' })
         )
       }
     >
-      <Copy className="size-4" />
+      <Copy aria-hidden="true" className="size-4" />
     </Button>
   )
 }
@@ -166,9 +172,10 @@ const BucketMenu = ({ bucket }: { bucket: string }) => {
             variant="ghost"
             size="icon"
             className="size-8 shrink-0"
+            aria-label={t('bucket_actions', { name: bucket })}
             data-test="bucket-more-details-trigger"
           >
-            <Ellipsis className="size-4" />
+            <Ellipsis aria-hidden="true" className="size-4" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">

@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { uploadObjects } from '@/api/s3'
 import { useUploadProgress } from '@/components/providers/uploadProgressContext'
 import { t } from '@/i18n'
+import { errorToastContent } from '@/lib/requestError'
 import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
 import { useToast } from './use-toast'
@@ -22,7 +23,6 @@ export default function useFileUploadMutation({
 }: IUseUploadMutationProps) {
   const { abortController, updateUploadNamesState } = useUploadProgress()
   const { toast } = useToast()
-  const toastDuration = 1000
 
   const { mutateAsync } = useMutation({
     mutationFn: async (file: File) => {
@@ -51,10 +51,11 @@ export default function useFileUploadMutation({
     onError: (err: HTTPClientError<{ message?: string }>) => {
       // For abort errors, we check the name since fetch abort errors have name 'AbortError'
       if (err.name !== 'AbortError') {
+        // Stays until dismissed (the default for destructive toasts): a refusal
+        // that vanished after a second could not be read, let alone acted on.
         toast({
-          title: err.response?.data.message || t('error_object_upload'),
           variant: 'destructive',
-          duration: toastDuration
+          ...errorToastContent(err, t('error_object_upload'))
         })
         abortController.current = null
       }

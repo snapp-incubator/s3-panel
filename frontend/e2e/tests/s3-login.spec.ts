@@ -10,7 +10,7 @@ test.describe('S3 Bucket Login Form', () => {
   }) => {
     // Verify we're on the login page
     await expect(page).toHaveURL('/object-storage/s3-bucket')
-    await expect(page.locator('h2')).toHaveText('S3 Bucket')
+    await expect(page.locator('h1')).toHaveText('S3 Bucket')
     // Fill out the form
     // Select region from dropdown
     await page.getByRole('combobox').click()

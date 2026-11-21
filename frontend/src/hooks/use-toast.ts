@@ -154,6 +154,11 @@ function toast({ ...props }: Toast) {
   dispatch({
     type: 'ADD_TOAST',
     toast: {
+      // An error stays until dismissed: it usually says what to do next, and
+      // one that closed on its own was gone before it could be read.
+      ...(props.variant === 'destructive' && props.duration === undefined
+        ? { duration: Number.POSITIVE_INFINITY }
+        : {}),
       ...props,
       id,
       open: true,

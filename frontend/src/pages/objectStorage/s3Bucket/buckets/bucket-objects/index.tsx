@@ -6,8 +6,10 @@ import { fetchObjects, OBJECTS_PAGE_SIZE } from '@/api/s3'
 import { bucketObjectKeys } from '@/api/s3Keys'
 import RegionBadge from '@/components/bucket-card/region-badge'
 import CustomPagination from '@/components/custom-pagination'
+import ManageAccessLink from '@/components/manage-access-link'
 import ObjectTable from '@/components/object-table'
 import { useTitle } from '@/components/providers/titleProvider'
+import ReadOnlyBanner from '@/components/read-only-banner'
 import SearchField from '@/components/search-field'
 import {
   Breadcrumb,
@@ -21,12 +23,15 @@ import { Button } from '@/components/shadcn/button'
 import { Card, CardContent, CardFooter } from '@/components/shadcn/card'
 import ShareObject from '@/components/share-object'
 import UploadObject from '@/components/upload-object'
+import useBucketAccess from '@/hooks/useBucketAccess'
+import useDocumentTitle from '@/hooks/useDocumentTitle'
 import useEffectOnce from '@/hooks/useEffectOnce'
 import useLastBucketsSearch from '@/hooks/useLastBucketsSearch'
 import useObjectListCursors, { listingKey } from '@/hooks/useObjectListCursors'
 import usePanelSession from '@/hooks/usePanelSession'
 import useUrlBackedInput from '@/hooks/useUrlBackedInput'
 import { t } from '@/i18n'
+import { retryUnlessDenied, whoToAsk } from '@/lib/requestError'
 
 const OBJECTS_ROUTE = '/object-storage/s3-bucket/buckets/$bucketName'
 
@@ -55,6 +60,13 @@ export default function BucketObjects() {
   useEffectOnce(() => {
     setTitle('SnappCloud - S3 Bucket Objects')
   })
+  // What this person may do here: write controls follow the bucket's own
+  // permission (iam mode) and the deployment's read-only switch.
+  const access = useBucketAccess(bucketName, isIAMMode ? region : undefined)
+  // IAM's display name drops the tenant the identifier may carry.
+  const displayName = access.bucket?.display_name || bucketName
+
+  useDocumentTitle(displayName)
 
   const [openShareObject, setOpenShareObject] = useState(false)
   const [objectName, setObjectName] = useState<string | null>(null)
@@ -95,7 +107,7 @@ export default function BucketObjects() {
     data: objectList,
     isLoading,
     refetch,
-    isError
+    error
   } = useQuery({
     queryKey: bucketObjectKeys.all(
       bucketName,
@@ -113,8 +125,12 @@ export default function BucketObjects() {
         token,
         region: bucketRegion
       }),
-    enabled: token !== undefined
+    enabled: token !== undefined,
+    retry: retryUnlessDenied
   })
+
+  // Nothing can be written into a bucket the page could not even list.
+  const canWrite = access.canWrite && !error
 
   useEffect(() => {
     if (objectList) {
@@ -153,10 +169,19 @@ export default function BucketObjects() {
 
   return (
     <div>
-      <div className="flex items-center gap-3">
-        <h2 className="text-3xl">S3 Bucket</h2>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="text-3xl">{displayName}</h1>
         <RegionBadge region={region} />
+        {/* Back to IAM, where who has access to this bucket is managed. */}
+        <ManageAccessLink
+          resourceId={access.bucket?.resource_id}
+          className="ml-auto"
+        />
       </div>
+      {access.readOnly ? <ReadOnlyBanner scope="deployment" /> : null}
+      {!access.readOnly && access.bucketReadOnly ? (
+        <ReadOnlyBanner scope="bucket" hint={whoToAsk(isIAMMode)} />
+      ) : null}
       <Breadcrumb className="mt-4">
         <BreadcrumbList>
           <BreadcrumbItem>
@@ -171,7 +196,7 @@ export default function BucketObjects() {
                   })
                 }
               >
-                Buckets
+                {t('buckets')}
               </Button>
             </BreadcrumbLink>
           </BreadcrumbItem>
@@ -214,18 +239,25 @@ export default function BucketObjects() {
         </BreadcrumbList>
       </Breadcrumb>
       <div className="mt-6 flex items-center justify-between">
-        <SearchField value={searchText} onChange={setSearchText} />
-        <UploadObject
-          bucketName={bucketName}
-          region={bucketRegion}
-          currentPath={currentPath}
-          refetchObjects={() => refetch()}
+        <SearchField
+          value={searchText}
+          onChange={setSearchText}
+          label={t('search_objects')}
         />
+        {canWrite ? (
+          <UploadObject
+            bucketName={bucketName}
+            region={bucketRegion}
+            currentPath={currentPath}
+            refetchObjects={() => refetch()}
+          />
+        ) : null}
       </div>
       <Card className="mt-8">
         <CardContent className="p-0">
           <ObjectTable
-            isError={isError}
+            error={error}
+            onRetry={() => refetch()}
             isLoading={isLoading || token === undefined}
             objectList={objectList!}
             bucket={bucketName}
@@ -233,6 +265,8 @@ export default function BucketObjects() {
             currentPath={currentPath}
             refetchObjects={() => refetch()}
             isSearch={!!search}
+            canWrite={canWrite}
+            canShare={!access.readOnly}
             onShareObject={objectName => {
               setObjectName(objectName)
               setOpenShareObject(true)
@@ -253,7 +287,7 @@ export default function BucketObjects() {
               {t('search_partial_hint')}
             </p>
           ) : null}
-          {knownPages > 1 ? (
+          {knownPages > 1 && !error ? (
             <CustomPagination
               currentPage={currentPage}
               totalPages={knownPages}

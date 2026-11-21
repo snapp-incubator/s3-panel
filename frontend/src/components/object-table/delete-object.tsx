@@ -13,6 +13,7 @@ import {
 } from '@/components/shadcn/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import { t } from '@/i18n'
+import { errorToastContent } from '@/lib/requestError'
 import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
 import type { TDeleteObjectProps } from './deleteObject.types'
@@ -41,7 +42,7 @@ export default function DeleteObject({
       setOpen(false)
       toast({
         variant: 'destructive',
-        title: err.response?.data.message || t('failed_delete_object')
+        ...errorToastContent(err, t('failed_delete_object'))
       })
     }
   })
@@ -55,8 +56,13 @@ export default function DeleteObject({
       <TooltipProvider delayDuration={50}>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button size="icon" variant="ghost" onClick={deleteHandler}>
-              <Trash2 />
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={t('delete_object_named', { name: object })}
+              onClick={deleteHandler}
+            >
+              <Trash2 aria-hidden="true" />
             </Button>
           </TooltipTrigger>
           <TooltipContent>

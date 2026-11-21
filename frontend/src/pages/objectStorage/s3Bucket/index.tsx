@@ -9,6 +9,7 @@ import {
   CardDescription,
   CardTitle
 } from '@/components/shadcn/card'
+import useDocumentTitle from '@/hooks/useDocumentTitle'
 import usePanelSession from '@/hooks/usePanelSession'
 import { t } from '@/i18n'
 
@@ -21,10 +22,11 @@ export default function S3BucketPage() {
   useEffectOnce(() => {
     setTitle(t('s3_pages_title'))
   })
+  useDocumentTitle(t('sign_in_button'))
 
   return (
     <div className="flex min-h-full min-w-full flex-col">
-      <h2 className="text-3xl">{t('s3_bucket')}</h2>
+      <h1 className="text-3xl">{t('s3_bucket')}</h1>
       <Card className="m-auto min-h-[363px] w-[500px] p-6 pb-0">
         <CardTitle>{t('s3_bucket')}</CardTitle>
         <CardDescription className="mt-4">

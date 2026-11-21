@@ -9,6 +9,7 @@ import {
 } from '@/components/shadcn/dialog'
 import { useToast } from '@/hooks/use-toast'
 import { t } from '@/i18n'
+import { errorToastContent } from '@/lib/requestError'
 import type { z } from '@/lib/zod'
 import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
@@ -38,7 +39,7 @@ export default function CreateBucket({
     onError: (err: HTTPClientError<{ message?: string }>) => {
       toast({
         variant: 'destructive',
-        title: err.response?.data.message || err.message
+        ...errorToastContent(err, t('failed_create_bucket'))
       })
     }
   })

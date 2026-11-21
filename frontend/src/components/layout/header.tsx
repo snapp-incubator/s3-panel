@@ -38,9 +38,11 @@ const Header = () => {
           to="/"
           className="hidden items-center justify-between gap-2 md:flex"
         >
-          <Boxes className="size-6" />
+          <Boxes aria-hidden="true" className="size-6" />
+          {/* Not a heading: each page has its own <h1>, and this bar is
+              absent inside a console. */}
           <div className="flex items-center justify-center gap-2">
-            <h1 className="text-lg font-semibold">{title}</h1>
+            <span className="text-lg font-semibold">{title}</span>
           </div>
         </Link>
         <div className="flex items-center gap-3">
