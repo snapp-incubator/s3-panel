@@ -270,3 +270,29 @@ func (p PanelConfig) WithDefaults() PanelConfig {
 	}
 	return p
 }
+
+// ShareConfig bounds the share links the panel signs.
+type ShareConfig struct {
+	// MaxDuration is the longest a share link may live, e.g. "15m" or "24h".
+	// Zero (the default) adds no cap of its own, so links may last as long as
+	// the caller asks — and, in iam mode, as long as the session credential that
+	// signs them, which always caps them. When both apply the shorter wins.
+	//
+	// It exists for instances whose links should not live long whatever the
+	// credential allows, e.g. a staging panel pointed at production storage.
+	// When set it must be at least MinShareMaxDuration.
+	MaxDuration time.Duration `json:"max_duration" koanf:"max_duration"`
+}
+
+// MinShareMaxDuration is the shortest share.max_duration accepted: the share
+// dialog offers durations in whole minutes, so a shorter cap would leave it
+// nothing to offer.
+const MinShareMaxDuration = time.Minute
+
+// Validate reports a cap that cannot be honoured.
+func (s ShareConfig) Validate() error {
+	if s.MaxDuration != 0 && s.MaxDuration < MinShareMaxDuration {
+		return fmt.Errorf("share.max_duration %s: must be 0 (no cap) or at least %s", s.MaxDuration, MinShareMaxDuration)
+	}
+	return nil
+}

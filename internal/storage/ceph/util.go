@@ -7,6 +7,7 @@ import (
 	"hash/crc32"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -202,4 +203,22 @@ func parseExpiration(input string, defaultExpire time.Duration) (time.Duration, 
 	default:
 		return 0, fmt.Errorf("invalid unit: %s", unit)
 	}
+}
+
+// presignedExpiry is when a presigned SigV4 URL stops working: its X-Amz-Date
+// plus X-Amz-Expires, which is what the gateway checks. Read back from the URL
+// rather than computed, because the signer truncates both to whole seconds.
+// fallback is returned for a URL that does not carry them.
+func presignedExpiry(rawURL string, fallback time.Time) time.Time {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fallback
+	}
+	q := u.Query()
+	signed, errDate := time.Parse("20060102T150405Z", q.Get("X-Amz-Date"))
+	seconds, errExpires := strconv.ParseInt(q.Get("X-Amz-Expires"), 10, 64)
+	if errDate != nil || errExpires != nil || seconds <= 0 {
+		return fallback
+	}
+	return signed.Add(time.Duration(seconds) * time.Second)
 }

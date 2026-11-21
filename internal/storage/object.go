@@ -102,4 +102,25 @@ type ObjectHeadResponse struct {
 
 type ObjectShareResponse struct {
 	URL string `json:"url"`
+	// ExpiresAt is when the link stops working, as signed into it (RFC 3339,
+	// UTC). It is the EFFECTIVE expiry, after every cap — not the one asked for.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	// ExpiresInSeconds is how long the link was signed for.
+	ExpiresInSeconds int64 `json:"expires_in_seconds,omitempty"`
+	// SessionBound reports that the link is signed with the person's session
+	// credential (iam mode), so it also stops working when they sign out.
+	SessionBound bool `json:"session_bound"`
+}
+
+// ObjectShareLimitResponse is the longest share link that could be signed for
+// a bucket right now.
+type ObjectShareLimitResponse struct {
+	// MaxSeconds is the longest a link may live: the least of what remains of
+	// the credential that would sign it and share.max_duration. Zero means no
+	// cap applies.
+	MaxSeconds int64 `json:"max_seconds"`
+	// SessionBound reports that a link would be signed with the person's
+	// session credential (iam mode), so it would also stop working when they
+	// sign out.
+	SessionBound bool `json:"session_bound"`
 }

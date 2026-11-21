@@ -172,6 +172,42 @@ const downloadObject = async (
 
 interface IShareLinkResponse {
   url: string
+  /**
+   * When the link stops working (RFC 3339), after every cap the server applied —
+   * not the duration asked for. Absent from a backend that predates it.
+   */
+  expires_at?: string
+  /** How long the link was signed for, in seconds. */
+  expires_in_seconds?: number
+  /**
+   * The link is signed with the person's session credential (iam mode), so it
+   * also ends when they sign out. Absent from a backend that predates it.
+   */
+  session_bound?: boolean
+}
+
+interface IShareLimitResponse {
+  /** The longest a link may live right now, in seconds; 0 means uncapped. */
+  max_seconds: number
+  /** A link would end when the person signs out (iam mode). */
+  session_bound: boolean
+}
+
+/**
+ * The longest share link the server would sign for this bucket right now: what
+ * remains of the credential that signs it (iam mode) and share.max_duration.
+ */
+const fetchShareLimit = async (
+  bucket: string,
+  region?: string,
+  signal?: AbortSignal
+): Promise<IShareLimitResponse> => {
+  const response = await centralClient.get<IShareLimitResponse>(
+    `/s3/api/object/share/limit?${buildQueryString({ bucket })}`,
+    { ...inRegion(region), signal }
+  )
+
+  return response.data
 }
 
 const shareLink = async (
@@ -196,6 +232,8 @@ const shareLink = async (
   return response.data
 }
 
+export type { IShareLimitResponse, IShareLinkResponse }
+
 export {
   createBucket,
   deleteBucketApi,
@@ -205,6 +243,7 @@ export {
   fetchBucketsQuota,
   fetchObjects,
   fetchRegions,
+  fetchShareLimit,
   fetchUserDetails,
   fetchUserQuota,
   inRegion,

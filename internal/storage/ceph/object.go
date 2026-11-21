@@ -432,10 +432,16 @@ func (c CephObjectStorage) ObjectShare(serverAdminConfig config.ObjectStorageCon
 		Bucket: aws.String(meta.Bucket),
 		Key:    aws.String(meta.Object),
 	}
+	signedAt := time.Now()
 	urlPreSign, errPreSignGet := preSignClient.PresignGetObject(context.Background(), &objectShareInput)
 	if errPreSignGet != nil {
 		return storage.ObjectShareResponse{}, storage.HTTPErrorWithCode{Code: http.StatusInternalServerError, Message: errPreSignGet}
 	}
 
-	return storage.ObjectShareResponse{URL: urlPreSign.URL}, storage.HTTPErrorWithCode{}
+	expiresAt := presignedExpiry(urlPreSign.URL, signedAt.Add(expiration))
+	return storage.ObjectShareResponse{
+		URL:              urlPreSign.URL,
+		ExpiresAt:        expiresAt.UTC().Format(time.RFC3339),
+		ExpiresInSeconds: int64(expiration / time.Second),
+	}, storage.HTTPErrorWithCode{}
 }

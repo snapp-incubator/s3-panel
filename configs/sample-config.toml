@@ -81,6 +81,17 @@ secret_key = ""
 # control_url with its last path segment replaced by "api".
 # iam_api_url = "https://iam.example.com/api"
 
+# --- Share links ---------------------------------------------------------------
+#
+# The longest a share link may live, as a Go duration ("15m", "24h"). Unset or
+# "0" adds no cap of its own: a link lasts as long as asked. In iam mode a link
+# is signed with the person's short-lived session credential, so it can never
+# outlive that credential — and signing out revokes it, which ends the link.
+# When both apply the shorter wins, and the share dialog offers only durations
+# within it. Override with s3panel_share__max_duration.
+# [share]
+# max_duration = "24h"
+
 # --- auth_mode = "iam" only -------------------------------------------------
 # [oidc]
 # issuer_url = "https://keycloak.example.com/realms/snapp"
