@@ -429,3 +429,40 @@ func TestWithPanelHeaderLeavesOddPagesAlone(t *testing.T) {
 		t.Errorf("did not place the element after a body tag with attributes: %s", got)
 	}
 }
+
+// TestNoAccessNamesTheOwnerAndTheReason (M3): with the console's owner team
+// and reason, the page says whom to ask and why; an older console that sends
+// neither gets the generic wording, with no promise about bucket grants.
+func TestNoAccessNamesTheOwnerAndTheReason(t *testing.T) {
+	s, _ := actAsServer(t)
+	s.Config.Panel = config.PanelConfig{Enabled: true}.WithDefaults()
+	s.Config.Server.IAMConsoleURL = "https://iam.example/iam/"
+	answers := map[string]control.Viewer{
+		"u-bob":   {View: false, OwnerTeam: "storage-team", Reason: control.ViewerNone},
+		"u-carol": {View: false},
+	}
+	s.view = newViewerGate(func(_ context.Context, sub string) (control.Viewer, error) {
+		return answers[sub], nil
+	})
+	e := echo.New()
+	e.Use(securityHeaders())
+	e.Use(spaMiddleware(builtFrontend, "", s.renderPage))
+
+	bob := serve(e, signedInRequest(t, s.auth, "/", "u-bob"))
+	body := bob.Body.String()
+	if bob.Code != http.StatusForbidden {
+		t.Errorf("non-viewer: %d, want 403", bob.Code)
+	}
+	for _, want := range []string{"storage-team team", "no grant on this app", "grant on a bucket", `href="https://iam.example/iam"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("No access page lacks %q:\n%s", want, body)
+		}
+	}
+
+	carol := serve(e, signedInRequest(t, s.auth, "/", "u-carol"))
+	body = carol.Body.String()
+	if carol.Code != http.StatusForbidden || !strings.Contains(body, "Ask its owners for access.") ||
+		strings.Contains(body, "bucket") || strings.Contains(body, " team") {
+		t.Errorf("older console: %d\n%s", carol.Code, body)
+	}
+}

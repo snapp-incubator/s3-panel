@@ -62,7 +62,7 @@ func (s *Server) handleResolveIAMBucket() echo.HandlerFunc {
 		}
 		if s.view != nil {
 			if verdict := s.view.check(c.Request().Context(), session.Subject); verdict != viewAllowed {
-				return s.renderNoAccess(c, verdict)
+				return s.renderNoAccess(c, verdict, session.Subject)
 			}
 		}
 
