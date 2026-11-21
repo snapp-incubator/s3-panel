@@ -1,5 +1,6 @@
 import { AlertCircle, Folder, Share2 } from 'lucide-react'
 
+import ErrorState from '@/components/error-state'
 import { Alert, AlertDescription, AlertTitle } from '@/components/shadcn/alert'
 import { Button } from '@/components/shadcn/button'
 import { Skeleton } from '@/components/shadcn/skeleton'
@@ -45,25 +46,33 @@ const ObjectSkeleton = () => {
 }
 
 export default function ObjectTable({
-  isError,
+  error,
+  onRetry,
   isLoading,
   bucket,
   region,
   currentPath,
   objectList,
   isSearch,
+  canWrite,
+  canShare,
   refetchObjects,
   onShareObject,
   onNavigateToFolder
 }: TObjectTablesProps) {
+  // A failed listing is not an empty bucket: it says why, and whom to ask.
+  if (error) {
+    return <ErrorState error={error} subject="bucket" onRetry={onRetry} />
+  }
+
   return (
     <div>
-      {isError || (!isLoading && !objectList?.items?.length) ? (
+      {!isLoading && !objectList?.items?.length ? (
         <div className="p-4">
           <Alert>
             <AlertCircle className="size-5 !text-blue-400" />
             <AlertTitle className="!text-blue-400">{t('no_data')}</AlertTitle>
-            {isSearch ? null : (
+            {isSearch || !canWrite ? null : (
               <AlertDescription>{t('upload_first_object')}</AlertDescription>
             )}
           </Alert>
@@ -96,10 +105,22 @@ export default function ObjectTable({
                       onClick={() => onNavigateToFolder(item.name)}
                     >
                       <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <Folder className="size-4 text-blue-500" />
+                        {/* The row is clickable for a mouse; the button makes
+                            the folder reachable from the keyboard too. */}
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 text-left"
+                          onClick={event => {
+                            event.stopPropagation()
+                            onNavigateToFolder(item.name)
+                          }}
+                        >
+                          <Folder
+                            aria-hidden="true"
+                            className="size-4 text-blue-500"
+                          />
                           {displayName}
-                        </div>
+                        </button>
                       </TableCell>
                       <TableCell className="text-center text-muted-foreground">
                         —
@@ -123,19 +144,30 @@ export default function ObjectTable({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-center gap-2">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          onClick={() => onShareObject(objectKey)}
-                        >
-                          <Share2 />
-                        </Button>
-                        <DeleteObject
-                          object={objectKey}
-                          bucket={bucket}
-                          region={region}
-                          refetchObjects={refetchObjects}
-                        />
+                        {/* A share link is refused on a read-only deployment. */}
+                        {canShare ? (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            aria-label={t('share_object_named', {
+                              name: item.name
+                            })}
+                            title={t('share_object_named', {
+                              name: item.name
+                            })}
+                            onClick={() => onShareObject(objectKey)}
+                          >
+                            <Share2 aria-hidden="true" />
+                          </Button>
+                        ) : null}
+                        {canWrite ? (
+                          <DeleteObject
+                            object={objectKey}
+                            bucket={bucket}
+                            region={region}
+                            refetchObjects={refetchObjects}
+                          />
+                        ) : null}
                         <DownloadObject
                           bucket={bucket}
                           object={objectKey}

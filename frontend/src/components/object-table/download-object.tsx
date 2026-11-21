@@ -24,8 +24,13 @@ export default function DownloadObject({
     <TooltipProvider delayDuration={50}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button size="icon" variant="ghost" onClick={() => downloadObject()}>
-            <Download />
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={t('download_object_named', { name: object })}
+            onClick={() => downloadObject()}
+          >
+            <Download aria-hidden="true" />
           </Button>
         </TooltipTrigger>
         <TooltipContent>

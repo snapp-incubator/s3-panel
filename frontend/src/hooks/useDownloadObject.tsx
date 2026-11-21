@@ -1,6 +1,8 @@
 import { useMutation } from '@tanstack/react-query'
 
 import { downloadObject } from '@/api/s3'
+import { t } from '@/i18n'
+import { errorToastContent } from '@/lib/requestError'
 import { downloadUrl } from '@/lib/utils'
 import type { HTTPClientError } from '@/services/http/interceptorsConfig'
 
@@ -19,7 +21,7 @@ const useDownloadObject = (bucket: string, object: string, region?: string) => {
     onError: (err: HTTPClientError<{ message?: string }>) => {
       toast({
         variant: 'destructive',
-        title: err.response?.data.message || err.message
+        ...errorToastContent(err, t('failed_download_object'))
       })
     }
   })

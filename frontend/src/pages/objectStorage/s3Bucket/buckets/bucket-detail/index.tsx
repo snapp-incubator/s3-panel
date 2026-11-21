@@ -7,10 +7,13 @@ import { AlertMessage } from '@/components/alert-message'
 import PermissionBadges from '@/components/bucket-card/permission-badges'
 import RegionBadge from '@/components/bucket-card/region-badge'
 import ErrorState from '@/components/error-state'
+import ManageAccessLink from '@/components/manage-access-link'
 import { useTitle } from '@/components/providers/titleProvider'
 import { Card, CardContent, CardTitle } from '@/components/shadcn/card'
 import { Skeleton } from '@/components/shadcn/skeleton'
+import useDocumentTitle from '@/hooks/useDocumentTitle'
 import { t } from '@/i18n'
+import { retryUnlessDenied } from '@/lib/requestError'
 
 /** Renders a byte count for humans. -1 means "no limit", as the gateway reports. */
 const formatBytes = (bytes: number): string => {
@@ -55,23 +58,32 @@ export default function BucketDetail() {
   useEffectOnce(() => {
     setTitle(`SnappCloud - ${bucketName}`)
   })
+  useDocumentTitle(bucketName, t('bucket_detail'))
 
   const {
     data: detail,
     isFetching,
-    isError
+    error,
+    refetch
   } = useQuery({
     queryFn: () => fetchIAMBucketDetail(bucketName, region),
-    queryKey: ['bucket-detail', bucketName, region ?? '']
+    queryKey: ['bucket-detail', bucketName, region ?? ''],
+    retry: retryUnlessDenied
   })
 
-  if (isError) {
-    return <ErrorState />
+  if (error) {
+    return (
+      <div className="flex flex-col gap-2">
+        <h1 className="text-3xl">{bucketName}</h1>
+        <ErrorState error={error} subject="bucket" onRetry={() => refetch()} />
+      </div>
+    )
   }
 
   if (isFetching || !detail) {
     return (
       <div className="flex flex-col gap-4">
+        <h1 className="sr-only">{bucketName}</h1>
         <Skeleton className="h-10 w-64" />
         <div className="grid gap-4 md:grid-cols-3">
           <Skeleton className="h-24" />
@@ -86,7 +98,10 @@ export default function BucketDetail() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h2 className="text-3xl">{detail.display_name}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-3xl">{detail.display_name}</h1>
+          <ManageAccessLink resourceId={detail.resource_id} />
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
           <RegionBadge region={detail.region} />
           {detail.tenant ? <span>{detail.tenant}</span> : null}

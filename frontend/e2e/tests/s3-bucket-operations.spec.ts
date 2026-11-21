@@ -113,7 +113,10 @@ test.describe
 
       await page.locator('[data-test="cancel-delete-button"]').click()
       await expect(dialog).toBeHidden({ timeout: 5000 })
-      await expect(toast).toBeHidden({ timeout: 5000 }) // if auto-closing
+
+      // An error toast stays until dismissed.
+      await page.locator('[data-test="toast-close"]').click()
+      await expect(toast).toBeHidden({ timeout: 5000 })
 
       await bucketCard.scrollIntoViewIfNeeded()
       await expect(bucketCard).toBeVisible({ timeout: 5000 })

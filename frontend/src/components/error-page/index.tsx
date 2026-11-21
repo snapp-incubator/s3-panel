@@ -14,7 +14,7 @@ export default function ErrorPage({
       defaultTheme="light"
       storageKey={storageKey('vite-ui-theme')}
     >
-      {title}
+      <h1>{title}</h1>
       <p>{subtitle}</p>
       <a href={withBase(buttonLink)}>{buttonText}</a>
     </ThemeProvider>

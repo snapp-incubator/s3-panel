@@ -14,6 +14,7 @@ import CreateBucket from '@/components/create-bucket'
 import CustomPagination from '@/components/custom-pagination'
 import ErrorState from '@/components/error-state'
 import { useTitle } from '@/components/providers/titleProvider'
+import ReadOnlyBanner from '@/components/read-only-banner'
 import SearchField from '@/components/search-field'
 import { Button } from '@/components/shadcn/button'
 import {
@@ -25,10 +26,12 @@ import {
 } from '@/components/shadcn/select'
 import BucketCardSkeleton from '@/components/skeletons/BucketCardSkeleton'
 import UserQuota from '@/components/user-quota'
+import useDocumentTitle from '@/hooks/useDocumentTitle'
 import useLastBucketsSearch from '@/hooks/useLastBucketsSearch'
 import usePanelSession from '@/hooks/usePanelSession'
 import useUrlBackedInput from '@/hooks/useUrlBackedInput'
 import { t } from '@/i18n'
+import { retryUnlessDenied } from '@/lib/requestError'
 
 const BUCKETS_ROUTE = '/object-storage/s3-bucket/buckets'
 
@@ -89,7 +92,7 @@ export default function Buckets() {
   const {
     data: buckets,
     isFetching,
-    isError,
+    error,
     refetch
   } = useQuery({
     queryFn: () => fetchBucketsQuota(maxItems, page, search),
@@ -102,12 +105,13 @@ export default function Buckets() {
   const {
     data: iamBuckets,
     isFetching: iamFetching,
-    isError: iamError,
+    error: iamError,
     refetch: iamRefetch
   } = useQuery({
     queryFn: () => fetchIAMBuckets(maxItems, page, search, region),
     queryKey: ['iam-buckets', maxItems, page, search, region ?? ''],
     enabled: isIAMMode,
+    retry: retryUnlessDenied,
     // Keeps the page count and the region choices steady while loading.
     placeholderData: keepPreviousData
   })
@@ -115,6 +119,11 @@ export default function Buckets() {
   useEffectOnce(() => {
     setTitle('SnappCloud - s3 Buckets')
   })
+  useDocumentTitle(t('buckets'))
+
+  // A list that failed to load is not an empty list: it says why instead, and
+  // offers nothing that needs the list to have worked.
+  const listError = isIAMMode ? iamError : error
 
   const totalPages =
     (isIAMMode ? iamBuckets?.total_pages : buckets?.total_pages) ?? 0
@@ -160,23 +169,13 @@ export default function Buckets() {
   return (
     <div>
       <div className="flex flex-col justify-between gap-4 md:flex-row md:gap-0">
-        <h2 className="text-3xl">{t('s3_bucket')}</h2>
+        <h1 className="text-3xl">{t('s3_bucket')}</h1>
       </div>
       {/* Per-user quota is an s3-mode concept: in iam mode a user has no single
           gateway account to carry one, so quota is per bucket on the detail page. */}
       {isIAMMode ? null : <UserQuota />}
 
-      {isReadOnly ? (
-        <div
-          data-test="read-only-banner"
-          className="mt-4 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-sm"
-        >
-          <span className="font-medium">{t('read_only_panel')}</span>
-          <span className="ml-2 text-muted-foreground">
-            {t('read_only_panel_hint')}
-          </span>
-        </div>
-      ) : null}
+      {isReadOnly ? <ReadOnlyBanner scope="deployment" /> : null}
 
       {isIAMMode ? <ActAsBar /> : null}
 
@@ -192,10 +191,14 @@ export default function Buckets() {
         </div>
       ) : null}
 
-      <span className="mt-2 block text-xl font-semibold">{t('buckets')}</span>
+      <h2 className="mt-2 block text-xl font-semibold">{t('buckets')}</h2>
       <div className="mt-4 flex items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
-          <SearchField value={searchText} onChange={setSearchText} />
+          <SearchField
+            value={searchText}
+            onChange={setSearchText}
+            label={t('search_buckets')}
+          />
           {showRegionFilter ? (
             <Select value={region ?? ALL_REGIONS} onValueChange={setRegion}>
               <SelectTrigger
@@ -221,16 +224,20 @@ export default function Buckets() {
         </div>
         {/* A minted credential belongs to no tenant, so a bucket created with it
             would land outside the team's namespace. */}
-        {isIAMMode || isReadOnly ? null : (
+        {isIAMMode || isReadOnly || listError ? null : (
           <Button size="sm" onClick={() => setOpenCreate(true)}>
             {t('create_bucket')}
           </Button>
         )}
       </div>
 
-      {(isIAMMode ? iamError : isError) ? (
-        <div className="mt-20">
-          <ErrorState />
+      {listError ? (
+        <div className="mt-12">
+          <ErrorState
+            error={listError}
+            subject="buckets"
+            onRetry={() => (isIAMMode ? iamRefetch() : refetch())}
+          />
         </div>
       ) : (
         <>
