@@ -161,20 +161,32 @@ var probeClient = &http.Client{
 // that refuses an anonymous request (401, 403) is still there to serve the
 // signed-in ones.
 func ReachableProbe(url string) func(context.Context) error {
-	return httpProbe(url, func(code int) bool { return code < http.StatusInternalServerError })
+	return ReachableProbeWithHeader(url, nil)
+}
+
+// ReachableProbeWithHeader is ReachableProbe sending header on every probe,
+// for a dependency that logs an anonymous caller without it as a refusal
+// (IAM's /s3 does when it requires the panel's client key).
+func ReachableProbeWithHeader(url string, header http.Header) func(context.Context) error {
+	return httpProbe(url, header, func(code int) bool { return code < http.StatusInternalServerError })
 }
 
 // OKProbe GETs url and counts only a 2xx as up, for an endpoint that should
 // answer anonymous reads, such as OIDC discovery.
 func OKProbe(url string) func(context.Context) error {
-	return httpProbe(url, func(code int) bool { return code >= 200 && code < 300 })
+	return httpProbe(url, nil, func(code int) bool { return code >= 200 && code < 300 })
 }
 
-func httpProbe(url string, up func(int) bool) func(context.Context) error {
+func httpProbe(url string, header http.Header, up func(int) bool) func(context.Context) error {
 	return func(ctx context.Context) error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return err
+		}
+		for name, values := range header {
+			for _, v := range values {
+				req.Header.Add(name, v)
+			}
 		}
 		res, err := probeClient.Do(req)
 		if err != nil {

@@ -39,6 +39,19 @@ type Client struct {
 // (awss3.require_client_key_on_s3).
 const clientKeyHeader = "X-IAM-STS-Client"
 
+// PanelHeader returns the header that marks a request as this panel's: the
+// client key, or nil when none is configured. For callers that reach the
+// control endpoint without a Client, such as the readiness probe.
+func PanelHeader(key string) http.Header {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil
+	}
+	h := http.Header{}
+	h.Set(clientKeyHeader, key)
+	return h
+}
+
 // WithClientKey sets the shared secret the control endpoint may require (the
 // sts_client_key setting). It is sent on EVERY call — bucket list, stats and
 // policy on the S3 surface as well as minting and sign-out on STS — so the
