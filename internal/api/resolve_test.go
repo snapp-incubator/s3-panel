@@ -83,7 +83,12 @@ func TestResolveIAMBucketNames(t *testing.T) {
 		// Decoded once: "%25" stays a literal "%".
 		"/storage/iam/buckets/a%2525b": "/storage/object-storage/s3-bucket/buckets/a%2525b",
 		// Dot segments are not names.
-		"/storage/iam/buckets/..": "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/..":                                        "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/..%2F..%2Fiam":                             "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/team%2F..":                                 "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/..:x":                                      "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/a%2Fb%2Fc":                                 "/storage/object-storage/s3-bucket/buckets/",
+		"/storage/iam/buckets/" + url.PathEscape("ceph-teh-1|bucket|.."): "/storage/object-storage/s3-bucket/buckets/",
 		// RGW's spellings, encoded or not.
 		"/storage/iam/buckets/okd4_teh_1__payments%2Fexports?region=teh-2": tenanted + "teh-2",
 		"/storage/iam/buckets/okd4_teh_1__payments:exports":                tenanted + "teh-1",

@@ -49,11 +49,11 @@ func (s *Server) handleResolveIAMBucket() echo.HandlerFunc {
 			}
 		}
 		service, name := splitResourceID(strings.TrimSpace(raw))
-		name = normaliseBucketName(name)
-		region := strings.TrimSpace(c.QueryParam("region"))
-		if name == "" || name == "." || name == ".." {
+		if !plausibleBucketName(name) {
 			return c.Redirect(http.StatusFound, base+bucketPagePath)
 		}
+		name = normaliseBucketName(name)
+		region := strings.TrimSpace(c.QueryParam("region"))
 
 		session, ok := s.auth.Load(c)
 		if !ok {
@@ -97,6 +97,23 @@ func splitResourceID(s string) (service, name string) {
 		return parts[0], parts[2]
 	}
 	return "", s
+}
+
+// plausibleBucketName reports whether name can name a bucket at all, in any of
+// the spellings the resolver accepts. It refuses an empty name, a "." or ".."
+// in any segment ("../../iam" would otherwise become "..--../iam"), and more
+// than one tenant separator: a bucket name holds no "/" or ":" of its own.
+func plausibleBucketName(name string) bool {
+	segments := strings.FieldsFunc(name, func(r rune) bool { return r == '/' || r == ':' })
+	if len(segments) == 0 || len(segments) > 2 || strings.Count(name, "/")+strings.Count(name, ":") > 1 {
+		return false
+	}
+	for _, seg := range segments {
+		if seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // normaliseBucketName turns RGW's "<tenant>/<bucket>" and "<tenant>:<bucket>"
