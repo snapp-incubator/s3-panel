@@ -107,6 +107,33 @@ func (p *Panel) Register(ctx context.Context, m PanelManifest) (*PanelApp, error
 	return &app, nil
 }
 
+// Viewer is the console's answer to "may this person view the app".
+//
+// OwnerTeam and Reason are later additions to the contract and may be absent
+// (empty) from an older console; nothing may depend on them being there.
+type Viewer struct {
+	View bool
+	// OwnerTeam names the team that owns the app, so a refused person knows
+	// whom to ask.
+	OwnerTeam string
+	// Reason says why: one of the Viewer* constants, or "" when not given. A
+	// value this panel does not know is kept as is and treated as no reason.
+	Reason string
+}
+
+// The reasons the console gives for a viewer answer.
+const (
+	// ViewerGranted: the person (or a team of theirs) holds view on the app.
+	ViewerGranted = "granted"
+	// ViewerEveryone: the app is open to every signed-in person.
+	ViewerEveryone = "everyone"
+	// ViewerImplied: view follows from a grant on one of the app's resources
+	// (for storage, any bucket grant).
+	ViewerImplied = "implied"
+	// ViewerNone: nothing gives the person view.
+	ViewerNone = "none"
+)
+
 // CanView asks whether the person with this OIDC subject may view this app
 // (GET /panel/apps/self/viewers/{sub}).
 //
@@ -114,25 +141,38 @@ func (p *Panel) Register(ctx context.Context, m PanelManifest) (*PanelApp, error
 // or refusing the app key — and says nothing about the person. Deciding what to
 // do without an answer is the caller's job.
 func (p *Panel) CanView(ctx context.Context, subject string) (bool, error) {
+	v, err := p.Viewer(ctx, subject)
+	return v.View, err
+}
+
+// Viewer is CanView with the rest of the answer: the app's owner team and the
+// reason, when the console gives them.
+func (p *Panel) Viewer(ctx context.Context, subject string) (Viewer, error) {
 	if strings.TrimSpace(subject) == "" {
-		return false, fmt.Errorf("panel: no subject to ask about")
+		return Viewer{}, fmt.Errorf("panel: no subject to ask about")
 	}
 	payload, err := p.do(ctx, http.MethodGet, "/panel/apps/self/viewers/"+url.PathEscape(subject), nil)
 	if err != nil {
-		return false, err
+		return Viewer{}, err
 	}
 	var out struct {
-		View *bool `json:"view"`
+		View      *bool  `json:"view"`
+		OwnerTeam string `json:"owner_team"`
+		Reason    string `json:"reason"`
 	}
 	if err := json.Unmarshal(payload, &out); err != nil {
-		return false, fmt.Errorf("decode viewer answer: %w", err)
+		return Viewer{}, fmt.Errorf("decode viewer answer: %w", err)
 	}
 	// A body without the field is not an answer, and reading it as "false"
 	// would hide a broken console behind a wave of refusals.
 	if out.View == nil {
-		return false, fmt.Errorf("panel: viewer answer has no view field")
+		return Viewer{}, fmt.Errorf("panel: viewer answer has no view field")
 	}
-	return *out.View, nil
+	return Viewer{
+		View:      *out.View,
+		OwnerTeam: strings.TrimSpace(out.OwnerTeam),
+		Reason:    strings.TrimSpace(out.Reason),
+	}, nil
 }
 
 func (p *Panel) do(ctx context.Context, method, path string, body io.Reader) ([]byte, error) {

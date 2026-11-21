@@ -47,7 +47,7 @@ const (
 
 // viewGate caches the console's viewer answers per person (OIDC subject).
 type viewGate struct {
-	ask     func(ctx context.Context, subject string) (bool, error)
+	ask     func(ctx context.Context, subject string) (control.Viewer, error)
 	now     func() time.Time
 	onError func(subject string, err error)
 
@@ -57,15 +57,32 @@ type viewGate struct {
 }
 
 type viewAnswer struct {
-	view bool
-	at   time.Time
+	control.Viewer
+	at time.Time
 }
 
 // maxViewAnswers bounds the cache; past it, answers too old to use are swept.
 const maxViewAnswers = 10000
 
 func newViewGate(ask func(ctx context.Context, subject string) (bool, error)) *viewGate {
+	return newViewerGate(func(ctx context.Context, subject string) (control.Viewer, error) {
+		view, err := ask(ctx, subject)
+		return control.Viewer{View: view}, err
+	})
+}
+
+// newViewerGate is newViewGate for a console that also says who owns the app
+// and why the answer is what it is, which the "No access" page shows.
+func newViewerGate(ask func(ctx context.Context, subject string) (control.Viewer, error)) *viewGate {
 	return &viewGate{ask: ask, now: time.Now, answers: map[string]viewAnswer{}}
+}
+
+// lastAnswer is the console's most recent answer about this person, if any.
+func (g *viewGate) lastAnswer(subject string) (control.Viewer, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	a, ok := g.answers[subject]
+	return a.Viewer, ok
 }
 
 // check answers from the cache while it is fresh, asking the console otherwise.
@@ -77,7 +94,7 @@ func (g *viewGate) check(ctx context.Context, subject string) viewVerdict {
 	prior, known := g.answers[subject]
 	g.mu.Unlock()
 	if known && g.now().Sub(prior.at) < viewFreshFor {
-		return verdictOf(prior.view)
+		return verdictOf(prior.View)
 	}
 	return g.askConsole(ctx, subject, prior, known)
 }
@@ -100,25 +117,25 @@ func (g *viewGate) askConsole(ctx context.Context, subject string, prior viewAns
 	v, err, _ := g.group.Do(subject, func() (any, error) {
 		// Detached from the asker: a request that ends must not cancel the
 		// answer the others are waiting on. The client's own timeout bounds it.
-		view, err := g.ask(context.WithoutCancel(ctx), subject)
+		viewer, err := g.ask(context.WithoutCancel(ctx), subject)
 		if err == nil {
-			g.store(subject, view)
+			g.store(subject, viewer)
 		}
-		return view, err
+		return viewer, err
 	})
 	if err == nil {
-		return verdictOf(v.(bool))
+		return verdictOf(v.(control.Viewer).View)
 	}
 	if g.onError != nil {
 		g.onError(subject, err)
 	}
-	if known && prior.view && g.now().Sub(prior.at) < viewStaleFor {
+	if known && prior.View && g.now().Sub(prior.at) < viewStaleFor {
 		return viewAllowed
 	}
 	return viewUnknown
 }
 
-func (g *viewGate) store(subject string, view bool) {
+func (g *viewGate) store(subject string, viewer control.Viewer) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	now := g.now()
@@ -129,7 +146,7 @@ func (g *viewGate) store(subject string, view bool) {
 			}
 		}
 	}
-	g.answers[subject] = viewAnswer{view: view, at: now}
+	g.answers[subject] = viewAnswer{Viewer: viewer, at: now}
 }
 
 func verdictOf(view bool) viewVerdict {
@@ -196,7 +213,7 @@ func (s *Server) registerPanel(ctx context.Context) error {
 		return err
 	}
 
-	s.view = newViewGate(panel.CanView)
+	s.view = newViewerGate(panel.Viewer)
 	s.view.onError = func(subject string, err error) {
 		s.logger.Warn("could not ask the console whether the person may view this app",
 			zap.String("subject", subject), zap.Error(err))
@@ -303,7 +320,7 @@ func (s *Server) renderPage(c echo.Context, index []byte) error {
 	if s.auth != nil {
 		if session, ok := s.auth.Load(c); ok {
 			if verdict := s.view.check(c.Request().Context(), session.Subject); verdict != viewAllowed {
-				return s.renderNoAccess(c, verdict)
+				return s.renderNoAccess(c, verdict, session.Subject)
 			}
 		}
 	}
@@ -367,6 +384,8 @@ a{color:#0969da}
 <main>
 <h1>{{.Title}}</h1>
 <p>{{.Message}}</p>
+{{if .Reason}}<p>{{.Reason}}</p>{{end}}
+{{if .AskWhom}}<p>{{.AskWhom}}{{if .IAMURL}} <a href="{{.IAMURL}}">Open IAM</a>{{end}}</p>{{end}}
 <p><a href="{{.HomeURL}}">Back to all apps</a> &middot; <a href="{{.SignOutURL}}">Sign out</a></p>
 </main>
 </body>
@@ -376,10 +395,14 @@ a{color:#0969da}
 // renderNoAccess is the page a refused person sees. It is the panel's own
 // minimal page rather than the SPA, so a refused person never loads the app;
 // it keeps the console's header, so they can still reach the apps they may.
-func (s *Server) renderNoAccess(c echo.Context, verdict viewVerdict) error {
+//
+// It names the app's owner team and explains the console's reason when the
+// console gave them (contract additions an older console may not send), and
+// falls back to the generic wording otherwise.
+func (s *Server) renderNoAccess(c echo.Context, verdict viewVerdict, subject string) error {
 	p := s.Config.Panel.WithDefaults()
 	data := struct {
-		Title, Message, HomeURL, SignOutURL, HeaderScript, AppKey, Nonce string
+		Title, Message, Reason, AskWhom, IAMURL, HomeURL, SignOutURL, HeaderScript, AppKey, Nonce string
 	}{
 		Title:        "No access",
 		Message:      "You do not have access to this app. Ask its owners for access, or open another app.",
@@ -391,6 +414,25 @@ func (s *Server) renderNoAccess(c echo.Context, verdict viewVerdict) error {
 	}
 	if verdict == viewUnknown {
 		data.Message = "Your access to this app cannot be checked right now. Try again in a few minutes."
+	} else if answer, ok := s.view.lastAnswer(subject); ok {
+		data.Message = "You do not have access to this app."
+		if answer.Reason == control.ViewerNone {
+			data.Reason = "You hold no grant on this app, and no grant on any of its buckets. " +
+				"A grant on a bucket also gives you this app."
+		}
+		// Only a console that reports reasons also implies view from bucket
+		// grants (the same contract addition), so only then is a bucket grant
+		// worth asking for.
+		orBucket := ""
+		if answer.Reason != "" {
+			orBucket = ", or ask the admins of a team that owns a bucket you need for a grant on it"
+		}
+		if answer.OwnerTeam != "" {
+			data.AskWhom = "It is owned by the " + answer.OwnerTeam + " team: ask one of its admins for access" + orBucket + "."
+		} else {
+			data.AskWhom = "Ask its owners for access" + orBucket + "."
+		}
+		data.IAMURL = strings.TrimRight(strings.TrimSpace(s.Config.Server.IAMConsoleURL), "/")
 	}
 	var buf bytes.Buffer
 	if err := noAccessPage.Execute(&buf, data); err != nil {

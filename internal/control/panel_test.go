@@ -128,3 +128,27 @@ func TestNewPanelNeedsAKeyAndURL(t *testing.T) {
 		t.Error("accepted an empty key")
 	}
 }
+
+// TestViewerReadsOwnerTeamAndReason: the contract's later fields are read when
+// present and left empty when an older console does not send them.
+func TestViewerReadsOwnerTeamAndReason(t *testing.T) {
+	answers := map[string]string{
+		"u-new": `{"view":false,"owner_team":" storage-team ","reason":"none"}`,
+		"u-old": `{"view":true}`,
+		"u-odd": `{"view":true,"reason":"because"}`,
+	}
+	srv := fakeRegistry(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(answers[r.URL.Path[len("/api/panel/apps/self/viewers/"):]]))
+	})
+	p, _ := NewPanel(srv.URL+"/api", "app_test", 0)
+	ctx := context.Background()
+	for sub, want := range map[string]Viewer{
+		"u-new": {View: false, OwnerTeam: "storage-team", Reason: ViewerNone},
+		"u-old": {View: true},
+		"u-odd": {View: true, Reason: "because"},
+	} {
+		if got, err := p.Viewer(ctx, sub); err != nil || got != want {
+			t.Errorf("%s: %+v %v, want %+v", sub, got, err, want)
+		}
+	}
+}
