@@ -340,7 +340,11 @@ func (s *Server) registerReadiness() {
 	}
 	gateway := strings.TrimSpace(s.Config.ObjectStorage.URL)
 	if s.Config.Server.IsIAMMode() {
-		add("iam", true, health.ReachableProbe(strings.TrimSpace(s.Config.ObjectStorage.ControlURL)))
+		// With the client key, as every other call to IAM: once IAM requires it
+		// on /s3, a probe without it is logged there as a refusal every 15 s.
+		add("iam", true, health.ReachableProbeWithHeader(
+			strings.TrimSpace(s.Config.ObjectStorage.ControlURL),
+			control.PanelHeader(s.Config.ObjectStorage.STSClientKey)))
 		issuer := strings.TrimRight(strings.TrimSpace(s.Config.OIDC.IssuerURL), "/")
 		add("oidc", false, health.OKProbe(issuer+"/.well-known/openid-configuration"))
 		if gateway != "" {
