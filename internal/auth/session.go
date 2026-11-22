@@ -49,7 +49,10 @@ type Session struct {
 	ActAs string `json:"act_as,omitempty"`
 	// SID is the provider's session ID (Keycloak's "sid" claim): what a
 	// back-channel logout or a sign-out deny-list would match this session by.
-	SID          string `json:"sid,omitempty"`
+	SID string `json:"sid,omitempty"`
+	// Binding is the value of the host-only companion cookie this session was
+	// issued with (Authenticator.BindSession), or "" when unbound.
+	Binding      string `json:"bnd,omitempty"`
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	// IDToken is the raw ID token, kept as the id_token_hint an RP-initiated

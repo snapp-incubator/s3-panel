@@ -59,6 +59,17 @@ type Authenticator struct {
 	// marker and nothing changes.
 	MarkSignOut bool
 
+	// BindSession ties each new session to a host-only companion cookie and
+	// refuses a session cookie that arrives without its own (see binding.go).
+	// Sessions issued unbound are refused once it is on, so turning it on signs
+	// everyone in again.
+	BindSession bool
+
+	// RevokeRefreshToken has Logout revoke the session's refresh token at the
+	// provider's revocation endpoint, so a copied cookie cannot refresh after
+	// sign-out. Without a revocation endpoint in discovery it does nothing.
+	RevokeRefreshToken bool
+
 	// OnSignIn runs once a sign-in has completed and its session is saved, with
 	// that session. Left nil, nothing runs.
 	OnSignIn func(context.Context, Session)
@@ -75,6 +86,15 @@ type Authenticator struct {
 	// authenticator sets or clears, and keeps the post-login landing under the
 	// panel. Set it before serving.
 	BasePath string
+
+	// revocationURL is the provider's RFC 7009 endpoint, from discovery.
+	revocationURL string
+	// httpClient makes the revocation call; nil is http.DefaultClient.
+	httpClient *http.Client
+	// logoutVerifier checks back-channel logout tokens (backchannel.go).
+	logoutVerifier *oidc.IDTokenVerifier
+	// signedOut is the back-channel deny-list of provider session IDs.
+	signedOut *sidDenyList
 
 	// Collapses concurrent and near-concurrent access-token refreshes, so one
 	// refresh token is never redeemed twice. See refreshShared.
@@ -109,8 +129,18 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Authenticator, error) {
 
 	scopes := append([]string{oidc.ScopeOpenID}, cfg.Scopes...)
 
+	var discovered struct {
+		Revocation string `json:"revocation_endpoint"`
+	}
+	_ = provider.Claims(&discovered)
+
 	return &Authenticator{
-		cfg:                cfg,
+		cfg:           cfg,
+		revocationURL: strings.TrimSpace(discovered.Revocation),
+		// A logout token has no nonce and need not carry exp; the back-channel
+		// handler checks its freshness itself.
+		logoutVerifier:     provider.Verifier(&oidc.Config{ClientID: cfg.ClientID, SkipExpiryCheck: true}),
+		signedOut:          newSIDDenyList(),
 		refreshGroupFields: refreshGroupFields{refreshMemo: newRefreshMemo()},
 		provider:           provider,
 		verifier:           provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
@@ -144,6 +174,9 @@ func (a *Authenticator) RegisterRoutes(e Router) {
 	// triggered cross-site by an image tag.
 	e.POST("/auth/logout", a.Logout)
 	e.GET("/auth/me", a.Me)
+	// The provider's server-to-server call when a session ends there
+	// (OpenID Connect Back-Channel Logout 1.0).
+	e.POST("/auth/backchannel-logout", a.BackchannelLogout)
 }
 
 // Login starts the authorization-code flow.
@@ -167,22 +200,32 @@ func (a *Authenticator) Login(c echo.Context) error {
 	if next := a.SafeReturnPath(c.QueryParam("next")); next != "" {
 		value += "." + base64.RawURLEncoding.EncodeToString([]byte(next))
 	}
-	a.setCookie(c, stateCookieName, value, stateTTL)
+	if name, hostWide := a.stateCookie(); hostWide {
+		a.setHostCookie(c, name, value, stateTTL)
+	} else {
+		a.setCookie(c, name, value, stateTTL)
+	}
 
 	return c.Redirect(http.StatusFound, a.oauth.AuthCodeURL(state, oidc.Nonce(nonce)))
 }
 
 // Callback completes the flow and sets the session cookie.
 func (a *Authenticator) Callback(c echo.Context) error {
-	stateCookie, err := c.Cookie(stateCookieName)
-	if err != nil || stateCookie.Value == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "login state is missing or expired; start again at "+a.BasePath+"/auth/login")
-	}
+	stateName, hostWide := a.stateCookie()
+	states := requestCookies(c.Request(), stateName)
 	// Clear it immediately: a state is single-use, and leaving it set would let a
 	// replayed callback reuse it.
-	a.clearCookie(c, stateCookieName)
+	if hostWide {
+		a.clearHostCookie(c, stateName)
+	} else {
+		a.clearCookie(c, stateName)
+	}
+	if len(states) != 1 || states[0] == "" {
+		// Two state cookies means one was set by someone else (cookie tossing).
+		return echo.NewHTTPError(http.StatusBadRequest, "login state is missing or expired; start again at "+a.BasePath+"/auth/login")
+	}
 
-	parts := strings.Split(stateCookie.Value, ".")
+	parts := strings.Split(states[0], ".")
 	if len(parts) < 2 || len(parts) > 3 {
 		return echo.NewHTTPError(http.StatusBadRequest, "login state is malformed")
 	}
@@ -224,6 +267,11 @@ func (a *Authenticator) Callback(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
 	}
 	session = a.withIAMAdmin(ctx, session)
+	if a.BindSession {
+		if session.Binding, err = randomToken(); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not persist the session")
+		}
+	}
 	if err := a.Save(c, session); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not persist the session")
 	}
@@ -311,12 +359,18 @@ func (a *Authenticator) postLoginRedirect() string {
 // OnLogout is best effort: a revoke that fails must not leave the person unable
 // to sign out, and the credential still expires on its own.
 func (a *Authenticator) Logout(c echo.Context) error {
-	if a.OnLogout != nil {
-		if session, ok := a.Load(c); ok {
+	if session, ok := a.Load(c); ok {
+		if a.OnLogout != nil {
 			a.OnLogout(c.Request().Context(), session)
+		}
+		if a.RevokeRefreshToken {
+			a.revokeRefreshToken(c.Request().Context(), session)
 		}
 	}
 	a.clearCookie(c, a.cookieName())
+	if a.BindSession {
+		a.clearHostCookie(c, a.bindCookieName())
+	}
 	a.expireLegacyCookies(c)
 	if a.MarkSignOut {
 		a.setCookie(c, signedOutCookieName, "1", signedOutTTL)
@@ -367,12 +421,27 @@ func (a *Authenticator) Me(c echo.Context) error {
 // five minutes on a default Keycloak — which is not a session, it is a
 // stopwatch. The sign-in itself ends at SessionExpiresAt.
 func (a *Authenticator) Load(c echo.Context) (Session, bool) {
-	cookie, err := c.Cookie(a.cookieName())
-	if err != nil || cookie.Value == "" {
+	values := requestCookies(c.Request(), a.cookieName())
+	if len(values) > 1 {
+		// The panel only ever sets one; another came from somewhere else.
+		a.refuseTossed(c)
 		return Session{}, false
 	}
-	session, err := a.codec.Decode(cookie.Value)
+	if len(values) == 0 || values[0] == "" {
+		return Session{}, false
+	}
+	session, err := a.codec.Decode(values[0])
 	if err != nil || session.Expired() {
+		return Session{}, false
+	}
+	if a.BindSession && !a.bindingHolds(c.Request(), session) {
+		// Not this browser's sign-in, or one issued before binding was on.
+		a.clearCookie(c, a.cookieName())
+		return Session{}, false
+	}
+	if a.signedOut.has(session.SID) {
+		// The provider ended this session (back-channel logout).
+		a.clearCookie(c, a.cookieName())
 		return Session{}, false
 	}
 	if !session.TokenExpired() {
@@ -476,6 +545,9 @@ func (a *Authenticator) Save(c echo.Context, s Session) error {
 		ttl = DefaultSessionTTL
 	}
 	a.setCookie(c, a.cookieName(), value, ttl)
+	if a.BindSession && s.Binding != "" {
+		a.setHostCookie(c, a.bindCookieName(), s.Binding, ttl)
+	}
 	return nil
 }
 

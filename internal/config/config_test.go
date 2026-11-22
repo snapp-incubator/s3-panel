@@ -148,3 +148,37 @@ func TestShareConfigValidate(t *testing.T) {
 		}
 	}
 }
+
+// TestProvideOIDCPanelSwitches: bind_session and revoke_refresh_token follow
+// panel.enabled until set, and an explicit false wins over the panel.
+func TestProvideOIDCPanelSwitches(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	unset := Provide(write("unset.toml", "[server]\n")).OIDC
+	if unset.BindSession != nil || unset.RevokeRefreshToken != nil {
+		t.Fatalf("unset switches = %v, %v, want nil", unset.BindSession, unset.RevokeRefreshToken)
+	}
+	if unset.BindsSession(false) || unset.RevokesRefreshToken(false) {
+		t.Error("standalone: a switch is on by default")
+	}
+	if !unset.BindsSession(true) || !unset.RevokesRefreshToken(true) {
+		t.Error("panel: a switch is off by default")
+	}
+
+	off := Provide(write("off.toml", "[oidc]\nbind_session = false\nrevoke_refresh_token = false\n")).OIDC
+	if off.BindsSession(true) || off.RevokesRefreshToken(true) {
+		t.Error("an explicit false did not win over the panel")
+	}
+
+	t.Setenv("s3panel_oidc__bind_session", "true")
+	if !Provide(write("env.toml", "[server]\n")).OIDC.BindsSession(false) {
+		t.Error("bind_session from env did not turn it on standalone")
+	}
+}

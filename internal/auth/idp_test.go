@@ -29,6 +29,16 @@ type fakeIdP struct {
 	mu    sync.Mutex
 	nonce string
 	sid   string
+
+	// revoked records each revocation request's form and Authorization;
+	// revokeStatus is what the endpoint answers (0 is 200).
+	revoked      []revocation
+	revokeStatus int
+}
+
+type revocation struct {
+	form          url.Values
+	authorization string
 }
 
 func newFakeIdP(t *testing.T) *fakeIdP {
@@ -45,6 +55,7 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			"authorization_endpoint":                idp.URL + "/authorize",
 			"token_endpoint":                        idp.URL + "/token",
 			"jwks_uri":                              idp.URL + "/jwks",
+			"revocation_endpoint":                   idp.URL + "/revoke",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
 	})
@@ -63,19 +74,44 @@ func newFakeIdP(t *testing.T) *fakeIdP {
 			"id_token":      idp.idToken(t),
 		})
 	})
+	mux.HandleFunc("/revoke", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		idp.mu.Lock()
+		idp.revoked = append(idp.revoked, revocation{form: r.PostForm, authorization: r.Header.Get("Authorization")})
+		status := idp.revokeStatus
+		idp.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+		}
+	})
 	idp.Server = httptest.NewServer(mux)
 	t.Cleanup(idp.Close)
 	return idp
 }
 
-func (idp *fakeIdP) idToken(t *testing.T) string {
-	idp.mu.Lock()
-	defer idp.mu.Unlock()
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: idp.key},
+// sign signs claims with key as the provider's key k1.
+func sign(t *testing.T, key *rsa.PrivateKey, claims map[string]any) string {
+	t.Helper()
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: key},
 		(&jose.SignerOptions{}).WithHeader("kid", "k1"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	payload, _ := json.Marshal(claims)
+	jws, err := signer.Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := jws.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func (idp *fakeIdP) idToken(t *testing.T) string {
+	idp.mu.Lock()
+	defer idp.mu.Unlock()
 	claims := map[string]any{
 		"iss":   idp.URL,
 		"aud":   "panel",
@@ -88,16 +124,7 @@ func (idp *fakeIdP) idToken(t *testing.T) string {
 	if idp.sid != "" {
 		claims["sid"] = idp.sid
 	}
-	payload, _ := json.Marshal(claims)
-	jws, err := signer.Sign(payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, err := jws.CompactSerialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return out
+	return sign(t, idp.key, claims)
 }
 
 // newIdPAuthenticator builds a real Authenticator against the fake provider.

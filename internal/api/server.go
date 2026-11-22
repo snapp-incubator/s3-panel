@@ -131,6 +131,11 @@ func (s *Server) registerIAMMode(ctx context.Context) error {
 		// Part of a console, the SPA signs in silently; an explicit sign-out
 		// must not hold the next one back (see auth.Authenticator.MarkSignOut).
 		s.auth.MarkSignOut = s.Config.Panel.Enabled
+		// Sibling hosts of a shared parent domain can toss a session cookie
+		// at the panel's path; binding it to a host-only companion stops that.
+		s.auth.BindSession = s.Config.OIDC.BindsSession(s.Config.Panel.Enabled)
+		// A copied cookie must not keep refreshing after the person signed out.
+		s.auth.RevokeRefreshToken = s.Config.OIDC.RevokesRefreshToken(s.Config.Panel.Enabled)
 	}
 	s.credentials = newCredentialCache(ctx)
 
