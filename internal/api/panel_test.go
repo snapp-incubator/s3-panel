@@ -361,7 +361,7 @@ func TestPanelOffChangesNothing(t *testing.T) {
 	}
 }
 
-// TestPagesEmbedTheConsoleHeader (proposal 015 §5): with the panel on, the
+// TestPagesEmbedTheConsoleHeader (proposal 018 §5): with the panel on, the
 // header bundle loads from the console's path under this response's nonce, and
 // its element comes first in <body>. Off, the page is the build's own.
 func TestPagesEmbedTheConsoleHeader(t *testing.T) {

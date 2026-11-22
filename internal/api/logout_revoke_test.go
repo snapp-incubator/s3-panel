@@ -66,7 +66,7 @@ func revokeServer(t *testing.T, sts *stsRecorder) *Server {
 	}
 }
 
-// TestSignOutRevokesEverywhereItShould (proposal 015 A6): the person's own
+// TestSignOutRevokesEverywhereItShould (proposal 018 A6): the person's own
 // console credentials in every granted region (no region named), and by name
 // in this instance's region and every region they were minted one in here, so
 // a region whose grant is already gone is still covered; and each credential

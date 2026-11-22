@@ -27,7 +27,7 @@ const recorded = (): TPanelHeaderState => {
 }
 
 /**
- * Tracks the console's shared header (proposal 015 §5), which the backend
+ * Tracks the console's shared header (proposal 018 §5), which the backend
  * embeds above the app when the panel is part of a console. The header must
  * never block the app: without its `snappcloud-header:ready` within 3 s of the
  * page loading, the app keeps its own bar. A header that draws later still

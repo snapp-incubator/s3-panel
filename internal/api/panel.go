@@ -23,7 +23,7 @@ import (
 )
 
 // How long the console's answer to "may this person view the app" is trusted
-// (proposal 015 §4). Within viewFreshFor it is reused as is. After that the
+// (proposal 018 §4). Within viewFreshFor it is reused as is. After that the
 // console is asked again; if it cannot answer, a YES no older than
 // viewStaleFor still stands, to ride out a short restart, and after that the
 // panel refuses.
@@ -339,7 +339,7 @@ const headerEventsScript = `(function(){var s=window.__panelHeader={state:"pendi
 
 var bodyOpenTag = regexp.MustCompile(`(?i)<body[^>]*>`)
 
-// withPanelHeader embeds the console's header in index.html (proposal 015 §5):
+// withPanelHeader embeds the console's header in index.html (proposal 018 §5):
 // the header bundle in <head>, and its element first in <body>. Both carry the
 // response's nonce placeholder, which serveIndex fills in like the build's own.
 // A page without the tags it needs is returned unchanged.
