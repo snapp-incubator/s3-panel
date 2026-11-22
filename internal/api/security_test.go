@@ -40,30 +40,55 @@ func serve(e *echo.Echo, req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
+// policyNonce is the nonce an enforced Content-Security-Policy names.
+func policyNonce(h http.Header) string {
+	_, after, _ := strings.Cut(h.Get("Content-Security-Policy"), "'nonce-")
+	nonce, _, _ := strings.Cut(after, "'")
+	return nonce
+}
+
 // TestSecurityHeadersOnEveryAnswer: the SPA, an API answer and an error all
 // carry the same headers, because a header only on the happy path is a header
-// an attacker routes around.
+// an attacker routes around. The CSP is enforced, nonce-based and requires
+// Trusted Types.
 func TestSecurityHeadersOnEveryAnswer(t *testing.T) {
 	e := newSecuredRouter(&Server{})
 	for _, path := range []string{"/", "/object-storage/s3-bucket", "/api/thing", "/api/missing"} {
 		rec := serve(e, httptest.NewRequest(http.MethodGet, path, nil))
 		h := rec.Header()
 		for name, want := range map[string]string{
-			"X-Content-Type-Options":  "nosniff",
-			"Referrer-Policy":         "strict-origin-when-cross-origin",
-			"X-Frame-Options":         "DENY",
-			"Content-Security-Policy": "frame-ancestors 'none'",
+			"X-Content-Type-Options": "nosniff",
+			"Referrer-Policy":        "strict-origin-when-cross-origin",
+			"X-Frame-Options":        "DENY",
 		} {
 			if got := h.Get(name); got != want {
 				t.Errorf("%s: %s = %q, want %q", path, name, got, want)
 			}
 		}
-		csp := h.Get("Content-Security-Policy-Report-Only")
-		if !strings.Contains(csp, "script-src 'nonce-") || !strings.Contains(csp, "'strict-dynamic'") {
-			t.Errorf("%s: report-only CSP is not nonce-based: %q", path, csp)
+		if ro := h.Values("Content-Security-Policy-Report-Only"); len(ro) != 0 {
+			t.Errorf("%s: a report-only policy is sent: %q", path, ro)
 		}
-		if strings.Contains(csp, "script-src 'self'") {
+		csp := h.Values("Content-Security-Policy")
+		if len(csp) != 1 {
+			t.Fatalf("%s: want one enforced Content-Security-Policy, got %q", path, csp)
+		}
+		for _, directive := range []string{
+			"script-src 'nonce-" + policyNonce(h) + "' 'strict-dynamic'",
+			"frame-ancestors 'none'",
+			"object-src 'none'",
+			"base-uri 'none'",
+			"require-trusted-types-for 'script'",
+			"trusted-types default",
+		} {
+			if policyNonce(h) == "" || !strings.Contains(csp[0], directive) {
+				t.Errorf("%s: policy lacks %q: %q", path, directive, csp[0])
+			}
+		}
+		if strings.Contains(csp[0], "script-src 'self'") {
 			t.Errorf("%s: script-src trusts 'self', which on a shared origin trusts every app", path)
+		}
+		if strings.Contains(csp[0], "'unsafe-eval'") || strings.Contains(csp[0], "allow-duplicates") {
+			t.Errorf("%s: policy loosened: %q", path, csp[0])
 		}
 		if h.Get("Strict-Transport-Security") != "" {
 			t.Errorf("%s: HSTS sent over plain HTTP", path)
@@ -93,9 +118,7 @@ func TestIndexCarriesTheResponseNonce(t *testing.T) {
 		if strings.Contains(body, cspNoncePlaceholder) {
 			t.Fatalf("placeholder left in the page: %s", body)
 		}
-		csp := rec.Header().Get("Content-Security-Policy-Report-Only")
-		_, after, _ := strings.Cut(csp, "'nonce-")
-		nonce, _, _ := strings.Cut(after, "'")
+		nonce := policyNonce(rec.Header())
 		if nonce == "" || !strings.Contains(body, `nonce="`+nonce+`"`) {
 			t.Fatalf("page does not carry the policy's nonce %q: %s", nonce, body)
 		}
@@ -210,8 +233,8 @@ func TestShareLinksArePOST(t *testing.T) {
 	}
 }
 
-// TestEnforcedCSPKeepsTheWholePolicy: switching to enforcement must send the
-// full policy, frame-ancestors included, as the one enforced header.
+// TestEnforcedCSPKeepsTheWholePolicy: enforcement sends the full policy,
+// frame-ancestors included, as the one enforced header.
 func TestEnforcedCSPKeepsTheWholePolicy(t *testing.T) {
 	e := echo.New()
 	e.Use(securityHeadersEnforcing(true))
@@ -223,5 +246,21 @@ func TestEnforcedCSPKeepsTheWholePolicy(t *testing.T) {
 	}
 	if h.Get("Content-Security-Policy-Report-Only") != "" {
 		t.Error("a report-only policy is still sent alongside the enforced one")
+	}
+}
+
+// TestReportOnlyStillEnforcesFraming: the report-only switch, kept for trying a
+// policy out, must still enforce frame-ancestors, which browsers ignore in a
+// report-only policy.
+func TestReportOnlyStillEnforcesFraming(t *testing.T) {
+	e := echo.New()
+	e.Use(securityHeadersEnforcing(false))
+	e.GET("/", func(c echo.Context) error { return c.NoContent(http.StatusNoContent) })
+	h := serve(e, httptest.NewRequest(http.MethodGet, "/", nil)).Header()
+	if got := h.Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+		t.Errorf("Content-Security-Policy = %q, want frame-ancestors 'none'", got)
+	}
+	if !strings.Contains(h.Get("Content-Security-Policy-Report-Only"), "require-trusted-types-for 'script'") {
+		t.Errorf("report-only policy is not the page policy: %q", h.Get("Content-Security-Policy-Report-Only"))
 	}
 }

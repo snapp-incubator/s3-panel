@@ -300,7 +300,14 @@ func (s *Server) registerRoutes() {
 		g.GET("/livez", health.HandleLive)
 		g.GET("/readyz", s.readiness.Handle)
 	}
-	base.GET("/docs/*", echoSwagger.WrapHandler)
+	// Swagger UI, standalone only. In a unified console the panel shares its
+	// origin with other apps, and a page anyone can load without signing in,
+	// running a third-party bundle outside the Trusted Types policy, has no
+	// place there. Unregistered, /docs answers 404: it stays a backend prefix
+	// the SPA leaves alone (spa.go).
+	if !s.Config.Panel.Enabled {
+		base.GET("/docs/*", stampDocsNonce(echoSwagger.WrapHandler))
+	}
 
 	// How the SPA learns which login flow to present.
 	base.GET("/api/config", s.HandleConfig())

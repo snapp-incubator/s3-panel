@@ -18,7 +18,8 @@ import (
 const cspNoncePlaceholder = "__CSP_NONCE__"
 
 // backendPrefixes are the paths the SPA must never answer: they belong to
-// handlers registered on the router.
+// handlers registered on the router. /docs stays here when Swagger UI is not
+// registered (panel.enabled), so it answers 404 rather than the app.
 var backendPrefixes = []string{"/api", "/s3/api", "/auth", "/health", "/livez", "/readyz", "/docs"}
 
 // frontendMiddleware serves the embedded frontend SPA for any GET or HEAD under
@@ -85,6 +86,50 @@ func serveIndex(c echo.Context, index []byte) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
 	return c.HTMLBlob(http.StatusOK, body)
 }
+
+// stampDocsNonce wraps Swagger UI (echoSwagger.WrapHandler) so it runs under
+// an enforced nonce policy: every /docs/* answer carries
+// docsContentSecurityPolicy, and index.html — whose script tags the library
+// writes without a nonce — has this response's nonce stamped on each of them.
+// The rest (the bundle, the stylesheet, doc.json) is served as is.
+//
+// index.html is never cached, for the same reason as the SPA's (serveIndex).
+func stampDocsNonce(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		nonce := cspNonce(c)
+		res := c.Response()
+		setPolicy(res.Header(), docsContentSecurityPolicy(nonce), true)
+		if path.Base(c.Request().URL.Path) != "index.html" {
+			return next(c)
+		}
+
+		page := &capturedPage{ResponseWriter: res.Writer, status: http.StatusOK}
+		res.Writer = page
+		err := next(c)
+		res.Writer = page.ResponseWriter
+		if err != nil {
+			return err
+		}
+		body := bytes.ReplaceAll(page.body.Bytes(), []byte("<script"), []byte(`<script nonce="`+nonce+`"`))
+		res.Header().Del(echo.HeaderContentLength)
+		res.Header().Set("Cache-Control", "no-store")
+		page.ResponseWriter.WriteHeader(page.status)
+		_, err = page.ResponseWriter.Write(body)
+		return err
+	}
+}
+
+// capturedPage holds a handler's answer back so it can be rewritten before it
+// is sent. Headers still go straight to the real response.
+type capturedPage struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (p *capturedPage) WriteHeader(code int) { p.status = code }
+
+func (p *capturedPage) Write(b []byte) (int, error) { return p.body.Write(b) }
 
 // underBase returns p relative to base ("/" for base itself), or false when p
 // is not under base. With no base every path is the panel's.

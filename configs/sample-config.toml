@@ -153,7 +153,10 @@ secret_key = ""
 #     app: at sign-in, then at most once a minute. If the registry cannot
 #     answer, a yes from the last 10 minutes still stands; after that the panel
 #     refuses ("No access" page, 403 for API calls);
-#   - embeds the console's header above the app (header_script).
+#   - embeds the console's header above the app (header_script), loaded under
+#     the page's CSP nonce: the header must run under Trusted Types and create
+#     no Trusted Types policy of its own (the CSP allows only the app's);
+#   - stops serving Swagger UI: <base_path>/docs answers 404.
 # Nothing here is needed to run the panel on its own.
 #
 # [panel]
