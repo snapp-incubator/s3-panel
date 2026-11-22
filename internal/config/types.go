@@ -185,6 +185,36 @@ type OIDCConfig struct {
 	// again. It is independent of the access token's lifetime, which is short
 	// (minutes) and refreshed underneath the session. Defaults to 12h.
 	SessionTTL time.Duration `json:"session_ttl" koanf:"session_ttl"`
+	// BindSession ties the session cookie to a host-only companion cookie
+	// ("__Host-s3panel_bind" when cookie_secure is on), whose value the sealed
+	// session also carries. A sibling host on the same parent domain can toss
+	// a session cookie of its own choosing at the panel's path (Domain=parent),
+	// but cannot set a host-only cookie for it, so a tossed session is refused.
+	// Unset, it is on exactly when panel.enabled is.
+	BindSession *bool `json:"bind_session,omitempty" koanf:"bind_session"`
+	// RevokeRefreshToken revokes the session's refresh token at the provider
+	// (RFC 7009, the discovery document's revocation_endpoint) on sign-out, so
+	// a copied cookie stops refreshing. Unset, it is on exactly when
+	// panel.enabled is.
+	RevokeRefreshToken *bool `json:"revoke_refresh_token,omitempty" koanf:"revoke_refresh_token"`
+}
+
+// BindsSession reports whether sessions are bound to their companion cookie;
+// panel is whether the panel is part of a unified console.
+func (c OIDCConfig) BindsSession(panel bool) bool {
+	if c.BindSession != nil {
+		return *c.BindSession
+	}
+	return panel
+}
+
+// RevokesRefreshToken reports whether sign-out revokes the refresh token at
+// the provider; panel is whether the panel is part of a unified console.
+func (c OIDCConfig) RevokesRefreshToken(panel bool) bool {
+	if c.RevokeRefreshToken != nil {
+		return *c.RevokeRefreshToken
+	}
+	return panel
 }
 
 // PanelConfig joins this panel to a unified console: several apps served under

@@ -121,6 +121,26 @@ secret_key = ""
 # Where a sign-in lands. A root-relative value is relative to base_path ("/"
 # lands on the panel's own home).
 # post_login_redirect = "/"
+#
+# Bind the session cookie to a host-only companion cookie
+# ("__Host-s3panel_bind", or "s3panel_bind" with cookie_secure off), so a
+# session cookie another host of the same parent domain tosses at the panel's
+# path is refused. A request carrying the session cookie twice is refused (and
+# every copy cleared) either way. Unset: on exactly when [panel] is enabled.
+# Turning it on signs everyone in again.
+# bind_session = true
+#
+# Revoke the refresh token at the provider (its discovery revocation_endpoint,
+# RFC 7009) on sign-out, so a copied cookie stops refreshing. On Keycloak this
+# also ends the client's session for the person. Unset: on exactly when
+# [panel] is enabled.
+# revoke_refresh_token = true
+#
+# Back-channel logout: register <host><base_path>/auth/backchannel-logout as
+# the client's "Backchannel logout URL" (with "session required" on). When
+# the provider ends a session, the panel refuses cookies naming its sid until
+# they could have expired. The list is per process: with several replicas,
+# only the one the provider reached knows.
 
 # --- Unified console (optional, off by default) ------------------------------
 #
