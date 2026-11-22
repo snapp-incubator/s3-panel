@@ -1,4 +1,4 @@
-# GitLab CI for SnappCloud's fork of the s3-panel (proposal 015, F-S2).
+# GitLab CI for SnappCloud's fork of the s3-panel (proposal 018, F-S2).
 #
 # The fork ships its own image into the cluster's internal registry instead of
 # waiting for an upstream release. Upstream CI (.github/workflows) is untouched

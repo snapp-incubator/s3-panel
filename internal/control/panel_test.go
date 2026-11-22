@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// fakeRegistry answers the panel API as the contract shapes it (proposal 015
+// fakeRegistry answers the panel API as the contract shapes it (proposal 018
 // §1.4), recording what it was asked.
 func fakeRegistry(t *testing.T, handle func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
 	t.Helper()
