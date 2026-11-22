@@ -56,6 +56,12 @@ serve_frontend = true
 # [server.region_endpoints]
 # teh-2 = "https://s3-panel.teh-2.example"
 
+# Cross-origin reads (CORS, with credentials). None by default: the panel serves
+# its own frontend, so its pages are same-origin. List the origins of a frontend
+# served from another host. Avoid "*": with credentials, browsers refuse it.
+# [server_cors_config]
+# allowed_origins = ["https://console.example.com"]
+
 [object_storage_config]
 # The gateway. Object operations go here — in iam mode, for buckets in this
 # instance's own region; a bucket in another region is reached through the
