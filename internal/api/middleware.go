@@ -8,10 +8,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// CORSMiddleware to handle CORS config
+// CORSMiddleware answers cross-origin requests from the configured origins.
+// With none configured it adds nothing at all: echo would read an empty list
+// as "*", and the panel's own pages are same-origin and need no CORS.
 func (s *Server) CORSMiddleware() echo.MiddlewareFunc {
+	origins := make([]string, 0, len(s.Config.Cors.AllowedOrigins))
+	for _, o := range s.Config.Cors.AllowedOrigins {
+		if o = strings.TrimSpace(o); o != "" {
+			origins = append(origins, o)
+		}
+	}
+	if len(origins) == 0 {
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
 	return middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:     s.Config.Cors.AllowedOrigins, // Specify your allowed origin(s)
+		AllowOrigins:     origins,
 		AllowMethods:     []string{echo.GET, echo.POST, echo.PUT, echo.DELETE, echo.PATCH, echo.OPTIONS},
 		AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, echo.HeaderXCSRFToken, echo.HeaderAccessControlAllowMethods},
 		AllowCredentials: true,

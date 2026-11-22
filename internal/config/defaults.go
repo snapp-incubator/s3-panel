@@ -26,9 +26,10 @@ func DefaultConfig() Config {
 		ServeFrontend: true,
 	}
 
-	serverCorsConfig := ServerCorsConfig{
-		AllowedOrigins: []string{"*"},
-	}
+	// No cross-origin reads. The panel serves its own frontend (and the Vite
+	// dev server proxies to it), so its pages are same-origin and need no CORS;
+	// an operator lists the origins of a frontend served from elsewhere.
+	serverCorsConfig := ServerCorsConfig{}
 
 	oidcConfig := OIDCConfig{
 		CookieName:        DefaultCookieName,
