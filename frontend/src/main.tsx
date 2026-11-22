@@ -1,4 +1,6 @@
-// First: zod must be configured before any module builds a schema.
+// First: the Trusted Types policy must exist before anything renders, and zod
+// must be configured before any module builds a schema.
+import '@/lib/trustedTypes'
 import '@/lib/zod'
 
 import * as Sentry from '@sentry/react'

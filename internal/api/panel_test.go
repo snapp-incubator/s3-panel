@@ -375,9 +375,7 @@ func TestPagesEmbedTheConsoleHeader(t *testing.T) {
 	rec := serve(e, httptest.NewRequest(http.MethodGet, "/object-storage/s3-bucket", nil))
 	body := rec.Body.String()
 
-	csp := rec.Header().Get("Content-Security-Policy-Report-Only")
-	_, after, _ := strings.Cut(csp, "'nonce-")
-	nonce, _, _ := strings.Cut(after, "'")
+	nonce := policyNonce(rec.Header())
 	if !strings.Contains(body, `<script src="/panel/header/v1/header.js" nonce="`+nonce+`" data-panel-header defer></script>`) {
 		t.Errorf("header bundle missing or without the response nonce:\n%s", body)
 	}

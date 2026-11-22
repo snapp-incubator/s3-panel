@@ -106,4 +106,15 @@ GitHub Actions (`.github/workflows`):
 
 The HTTP API is documented with Swagger/OpenAPI. With the server running, browse the
 interactive docs at `/docs/` (e.g. <http://127.0.0.1:8080/docs/>); the generated spec lives
-in [`docs/swagger.yaml`](docs/swagger.yaml).
+in [`docs/swagger.yaml`](docs/swagger.yaml). Swagger UI is served standalone only: with
+`panel.enabled` (a unified console) `/docs` answers 404.
+
+## Content Security Policy
+
+Every answer carries an **enforced** `Content-Security-Policy` (`internal/api/security.go`):
+scripts run only by the per-response nonce stamped into `index.html` (plus what they load,
+via `'strict-dynamic'`), nothing may frame the panel, and Trusted Types are required
+(`require-trusted-types-for 'script'; trusted-types default`). The SPA's one policy,
+`default`, admits only markup-free HTML strings (`frontend/src/lib/trustedTypes.ts`); do not
+add `innerHTML`/`eval`-style code to the frontend. Swagger UI at `/docs` gets the same policy
+without the Trusted Types directives, since its bundle writes markup through `innerHTML`.

@@ -24,23 +24,23 @@ func cspNonce(c echo.Context) string {
 
 // securityHeaders sets the response headers every page and API answer carries.
 //
-// The CSP is REPORT-ONLY for now: it names what the SPA should be loading, so a
-// violation shows up in the browser console before anything is enforced. It is
-// nonce-based rather than 'self'-based on purpose. When the panel shares an
-// origin with other apps (a path per app on one host), 'self' would trust every
-// app's script-typed responses, and the nonce is the only thing that says "this
-// page put that script here".
+// The CSP is ENFORCED, in every mode. It is nonce-based rather than
+// 'self'-based on purpose. When the panel shares an origin with other apps (a
+// path per app on one host), 'self' would trust every app's script-typed
+// responses, and the nonce is the only thing that says "this page put that
+// script here".
 //
-// Framing is enforced, not reported: browsers ignore frame-ancestors in a
-// report-only policy, and nothing frames this panel.
+// It also requires Trusted Types for every DOM sink that can run script, as the
+// console's own pages do (panel-shell). The SPA bundle writes no markup from
+// strings except one constant stylesheet in a dependency, which the bundle's
+// own "default" policy admits (frontend/src/lib/trustedTypes.ts); no other
+// policy may be created.
+//
+// Swagger UI (<base>/docs, standalone only) cannot run under Trusted Types and
+// gets its own policy: see docsContentSecurityPolicy.
 func securityHeaders() echo.MiddlewareFunc {
-	return securityHeadersEnforcing(enforceCSP)
+	return securityHeadersEnforcing(true)
 }
-
-// enforceCSP switches the CSP from report-only to enforced. Flip it only once
-// every page runs clean under it: Swagger UI at /docs loads scripts without a
-// nonce and would render blank.
-const enforceCSP = false
 
 // setCSP writes the policy as enforced or report-only. Enforced, the policy
 // already carries frame-ancestors, so it is the one Content-Security-Policy
@@ -48,13 +48,21 @@ const enforceCSP = false
 // header, because browsers ignore it in a report-only policy. One function
 // for both, so switching modes cannot leave a second h.Set on the same header
 // silently replacing the policy.
+//
+// Report-only is kept for securityHeadersEnforcing(false), a switch for
+// trying a stricter policy out without breaking anything; nothing in the
+// server uses it today.
 func setCSP(h http.Header, nonce string, enforce bool) {
+	setPolicy(h, contentSecurityPolicy(nonce), enforce)
+}
+
+func setPolicy(h http.Header, policy string, enforce bool) {
 	if enforce {
 		h.Del("Content-Security-Policy-Report-Only")
-		h.Set("Content-Security-Policy", contentSecurityPolicy(nonce))
+		h.Set("Content-Security-Policy", policy)
 		return
 	}
-	h.Set("Content-Security-Policy-Report-Only", contentSecurityPolicy(nonce))
+	h.Set("Content-Security-Policy-Report-Only", policy)
 	h.Set("Content-Security-Policy", "frame-ancestors 'none'")
 }
 
@@ -82,8 +90,10 @@ func securityHeadersEnforcing(enforce bool) echo.MiddlewareFunc {
 	}
 }
 
-func contentSecurityPolicy(nonce string) string {
-	return strings.Join([]string{
+// baseDirectives is what every page's policy holds: scripts only by this
+// response's nonce (and what those scripts load), nothing framing the page.
+func baseDirectives(nonce string) []string {
+	return []string{
 		"default-src 'self'",
 		"script-src 'nonce-" + nonce + "' 'strict-dynamic'",
 		// The UI library sets inline styles at runtime.
@@ -94,7 +104,44 @@ func contentSecurityPolicy(nonce string) string {
 		"base-uri 'none'",
 		"form-action 'self'",
 		"frame-ancestors 'none'",
-	}, "; ")
+	}
+}
+
+// contentSecurityPolicy is the policy of the SPA, the No access page and every
+// API answer.
+//
+// require-trusted-types-for makes every string written to a script-running
+// sink (innerHTML, script.src, eval, …) pass a Trusted Types policy first.
+// trusted-types names the one policy that may exist: the SPA's "default",
+// which admits markup-free strings only (frontend/src/lib/trustedTypes.ts).
+// Neither the SPA nor the console header creates any other; a script that
+// tries is refused, which is the point. 'none' would forbid the default policy
+// too, and a dependency (Radix Select) writes a constant stylesheet through
+// innerHTML that only a default policy can admit.
+func contentSecurityPolicy(nonce string) string {
+	return strings.Join(append(baseDirectives(nonce),
+		"require-trusted-types-for 'script'",
+		"trusted-types default",
+	), "; ")
+}
+
+// docsContentSecurityPolicy is the policy of Swagger UI (<base>/docs/*, served
+// only standalone). It is the page policy minus Trusted Types, enforced:
+//
+//   - swagger-ui-bundle.js writes markup through innerHTML in many places
+//     (React and DOMPurify among others) and ships no Trusted Types policy of
+//     its own, so it cannot run with require-trusted-types-for. Admitting it
+//     would take a permissive default policy, which would then cover the SPA
+//     too; per-path policies keep the SPA's strict.
+//   - Its scripts are still admitted only by nonce: swaggerUI stamps this
+//     response's nonce on the tags of its index.html, so the page keeps the
+//     same script-src as the SPA and no 'self' or 'unsafe-inline'.
+//
+// Not report-only: a report-only policy would leave /docs protected by
+// frame-ancestors alone, and the nonce policy is what keeps an injected
+// script off the page.
+func docsContentSecurityPolicy(nonce string) string {
+	return strings.Join(baseDirectives(nonce), "; ")
 }
 
 func newNonce() (string, error) {
