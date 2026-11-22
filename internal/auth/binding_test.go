@@ -68,8 +68,13 @@ func TestBoundSessionNeedsItsOwnCompanion(t *testing.T) {
 	if rec := me(e, "/storage/auth/me", victim); rec.Code != http.StatusUnauthorized {
 		t.Errorf("session without a companion = %d, want 401", rec.Code)
 	}
-	if rec := me(e, "/storage/auth/me", attacker, victimBind); rec.Code != http.StatusUnauthorized {
+	rec := me(e, "/storage/auth/me", attacker, victimBind)
+	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("tossed session with the victim's companion = %d, want 401", rec.Code)
+	}
+	// Cleared at the parent domains too, where a sibling host would set it.
+	if !hasClearAt(cookiesNamed(rec, config.DefaultCookieName), "/storage/auth/me") {
+		t.Errorf("the tossed cookie was not cleared at the request's path:\n%s", setCookieHeaders(rec))
 	}
 }
 

@@ -435,8 +435,9 @@ func (a *Authenticator) Load(c echo.Context) (Session, bool) {
 		return Session{}, false
 	}
 	if a.BindSession && !a.bindingHolds(c.Request(), session) {
-		// Not this browser's sign-in, or one issued before binding was on.
-		a.clearCookie(c, a.cookieName())
+		// Not this browser's sign-in (a tossed cookie, cleared wherever it
+		// could have been set), or one issued before binding was on.
+		a.refuseTossed(c)
 		return Session{}, false
 	}
 	if a.signedOut.has(session.SID) {
