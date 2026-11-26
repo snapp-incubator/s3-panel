@@ -243,8 +243,9 @@ type PanelConfig struct {
 	Nav []PanelNavItem `json:"nav" koanf:"nav"`
 	// Links tell the console how to open catalog resources here, e.g.
 	// {resource = "ceph-*|bucket", path = "/storage/…/{name}?region={region}"}.
-	// Each resource pattern must be one the app was admitted for. None by
-	// default.
+	// Each resource pattern must be one the app was admitted for. Defaults to
+	// bucket links (DefaultPanelLinkResource) through the resolver at
+	// <base_path>/iam/buckets/{name}?region={region}.
 	Links []PanelLink `json:"links" koanf:"links"`
 	// HeaderScript is the console header bundle. Defaults to
 	// "/panel/header/v1/header.js".
@@ -280,6 +281,9 @@ const (
 	DefaultPanelHomeURL          = "/"
 	DefaultPanelSignOutURL       = "/signout"
 	DefaultPanelRegisterInterval = 6 * time.Hour
+	// DefaultPanelLinkResource is the catalog pattern of the default link: every
+	// bucket, in every Ceph service. The app must be admitted for it.
+	DefaultPanelLinkResource = "ceph-*|bucket"
 )
 
 // WithDefaults fills every empty setting with its default.

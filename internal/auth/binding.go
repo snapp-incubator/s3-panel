@@ -10,7 +10,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// Cookie tossing (security review #6).
+// Cookie tossing.
 //
 // The session cookie is scoped to the panel's path, so it cannot carry the
 // __Host- prefix, and any host under the same parent domain can set a cookie of
