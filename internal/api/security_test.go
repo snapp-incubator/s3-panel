@@ -157,6 +157,7 @@ func TestCrossOriginWritesAreRefused(t *testing.T) {
 		{"explicit CORS origin", http.MethodPost, "https://console.example.com", http.StatusNoContent},
 		{"another host on the same site", http.MethodPost, "https://evil.example.com", http.StatusForbidden},
 		{"another port", http.MethodPost, "https://panel.example.com:8443", http.StatusForbidden},
+		{"own host over plain http", http.MethodPost, "http://panel.example.com", http.StatusForbidden},
 		{"null", http.MethodPost, "null", http.StatusForbidden},
 		{"garbage", http.MethodPost, "not a url", http.StatusForbidden},
 		{"a read is never checked", http.MethodGet, "https://evil.example.com", http.StatusOK},

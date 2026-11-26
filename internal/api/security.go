@@ -162,6 +162,14 @@ func isHTTPS(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(proto), "https")
 }
 
+// requestScheme is the scheme the browser used to reach the panel.
+func requestScheme(r *http.Request) string {
+	if isHTTPS(r) {
+		return "https"
+	}
+	return "http"
+}
+
 // isSafeMethod reports whether a method only reads (RFC 9110 §9.2.1).
 func isSafeMethod(method string) bool {
 	switch method {
@@ -209,7 +217,10 @@ func (s *Server) refuseCrossOrigin() echo.MiddlewareFunc {
 				return next(c)
 			}
 			if o, ok := normalizeOrigin(origin); ok {
-				if u, _ := url.Parse(o); u != nil && strings.EqualFold(u.Host, req.Host) {
+				// The same host AND scheme: on an HTTPS panel, a page served over
+				// plain HTTP on that host (which a network attacker can forge)
+				// is another origin.
+				if u, _ := url.Parse(o); u != nil && strings.EqualFold(u.Host, req.Host) && u.Scheme == requestScheme(req) {
 					return next(c)
 				}
 				if trusted[o] {
