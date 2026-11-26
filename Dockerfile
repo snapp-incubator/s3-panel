@@ -1,6 +1,6 @@
 # Where base images, Alpine packages, npm packages and Go modules come from.
 # Unset, everything comes from the public defaults exactly as before; a build
-# behind mirrors (e.g. the fork's GitLab CI) sets them with --build-arg.
+# behind mirrors sets them with --build-arg.
 ARG NODE_IMAGE=node:22-alpine
 ARG GO_IMAGE=golang:1.27-alpine
 ARG RUNTIME_IMAGE=alpine:3.24
