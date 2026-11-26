@@ -31,7 +31,9 @@ existingSecret: ""
 # Service, e.g. the panel served at a path prefix of IAM's console host.
 httpproxy:
   enabled: true
-  # The Contour ingress class both HTTPProxies below are programmed on.
+  # The Contour ingress class both HTTPProxies below are programmed on. For the
+  # include-only proxy it must be the class of the root HTTPProxy that
+  # includes it: Contour drops an include programmed on another class.
   ingressClassName: private
   # Serve the panel under this prefix of its own host (e.g. "/s3-panel", for an
   # image built with VITE_BASE_PATH=/s3-panel); "/" then redirects there. Empty

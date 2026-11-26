@@ -6,7 +6,7 @@ import { t } from '@/i18n'
 
 /**
  * The app's own minimal bar, shown in place of the console's header when that
- * header fails or is slow (proposal 018 §5): the app's name and a sign-out.
+ * header fails or is slow: the app's name and a sign-out.
  * The same 56 px as the header, in normal flow, so the page below does not
  * move when one replaces the other.
  */

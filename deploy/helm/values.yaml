@@ -105,7 +105,8 @@ snapp-object-store:
       # How the console opens catalog resources here. Each resource pattern
       # must be one the app was admitted for. Bucket links go to
       # <base_path>/iam/buckets/{name}, which resolves the control endpoint's
-      # bucket name (tenanted or not) to the bucket's page.
+      # bucket name (tenanted or not) to the bucket's page. Empty registers
+      # the example below.
       links: []
       #  - resource: "ceph-*|bucket"
       #    path: "/storage/iam/buckets/{name}?region={region}"

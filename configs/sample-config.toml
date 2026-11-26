@@ -140,7 +140,9 @@ secret_key = ""
 # the client's "Backchannel logout URL" (with "session required" on). When
 # the provider ends a session, the panel refuses cookies naming its sid until
 # they could have expired. The list is per process: with several replicas,
-# only the one the provider reached knows.
+# only the one the provider reached knows. A provider calls one back-channel
+# URL per client, so when several apps share a client (a unified console),
+# only the app that URL names hears of the logout.
 
 # --- Unified console (optional, off by default) ------------------------------
 #
@@ -177,7 +179,7 @@ secret_key = ""
 # path = "/storage/object-storage/s3-bucket/buckets"
 #
 # # How the console opens catalog resources here. The resource pattern must be
-# # one the app was admitted for. None by default. Point bucket links at
+# # one the app was admitted for. Default: the one below. Bucket links point at
 # # <base_path>/iam/buckets/{name}: it takes the control endpoint's name for a
 # # bucket ("<tenant>--<bucket>", "<tenant>/<bucket>", a bare name or a whole
 # # resource ID) and a region in any spelling, and redirects to the bucket's page.
