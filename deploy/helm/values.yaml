@@ -1,7 +1,8 @@
 snapp-object-store:
   enabled: false
   replica: 1
-  image: image-registry.openshift-image-registry.svc:5000/snappcloud-unified-panel/snapp_object_store:0.2.1
+  # Use the <version>-storage tag with base_path "/storage".
+  image: ghcr.io/snapp-incubator/s3-panel:0.10.1
   fqdn: ""
   resources:
     limits:
@@ -130,9 +131,3 @@ snapp-object-store:
       #   s3panel_oidc__client_secret   (omit for a public OIDC client)
       #   s3panel_oidc__cookie_key      (REQUIRED; openssl rand -base64 32)
       #   s3panel_panel__api_key        (when panel.enabled; the app credential)
-
-# Creates the object-store-gitlab-ci ServiceAccount and binds it to
-# registry-editor, so CI can push panel images into this namespace. The panel
-# does not need it to run.
-ciRegistryAccess:
-  enabled: true

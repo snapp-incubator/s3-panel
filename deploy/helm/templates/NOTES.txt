@@ -1,0 +1,5 @@
+{{- if (index .Values "snapp-object-store" "enabled") }}
+The s3-panel is installed in namespace {{ .Release.Namespace }}.
+{{- else }}
+The s3-panel is not enabled: set snapp-object-store.enabled=true.
+{{- end }}
