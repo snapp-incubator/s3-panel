@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -23,7 +24,7 @@ import (
 )
 
 // How long the console's answer to "may this person view the app" is trusted
-// (proposal 018 §4). Within viewFreshFor it is reused as is. After that the
+// (the console contract's viewer check). Within viewFreshFor it is reused as is. After that the
 // console is asked again; if it cannot answer, a YES no older than
 // viewStaleFor still stands, to ride out a short restart, and after that the
 // panel refuses.
@@ -129,10 +130,25 @@ func (g *viewGate) askConsole(ctx context.Context, subject string, prior viewAns
 	if g.onError != nil {
 		g.onError(subject, err)
 	}
+	// The console refusing the app's own key is an answer, not an outage: an
+	// admin disabled the app (its kill switch) or revoked its key. No earlier
+	// yes outlives that, and the refusal is kept like a "no" for the fresh
+	// window, so a disabled app does not ask again on every request.
+	if refusesAppKey(err) {
+		g.store(subject, control.Viewer{})
+		return viewDenied
+	}
 	if known && prior.View && g.now().Sub(prior.at) < viewStaleFor {
 		return viewAllowed
 	}
 	return viewUnknown
+}
+
+// refusesAppKey reports whether the console refused the app credential itself
+// (401 or 403), rather than failing to answer.
+func refusesAppKey(err error) bool {
+	var cerr *control.Error
+	return errors.As(err, &cerr) && (cerr.Status == http.StatusUnauthorized || cerr.Status == http.StatusForbidden)
 }
 
 func (g *viewGate) store(subject string, viewer control.Viewer) {
@@ -247,6 +263,14 @@ func (s *Server) panelManifest() control.PanelManifest {
 	for _, l := range cfg.Links {
 		links = append(links, control.PanelLink{Resource: l.Resource, Path: l.Path})
 	}
+	if len(links) == 0 {
+		// Bucket links go through the resolver (resolve.go), which takes the
+		// console's name for a bucket, tenanted or not.
+		links = append(links, control.PanelLink{
+			Resource: config.DefaultPanelLinkResource,
+			Path:     base + "/iam/buckets/{name}?region={region}",
+		})
+	}
 	return control.PanelManifest{
 		Description: cfg.Description,
 		Version:     version.Get(),
@@ -339,7 +363,7 @@ const headerEventsScript = `(function(){var s=window.__panelHeader={state:"pendi
 
 var bodyOpenTag = regexp.MustCompile(`(?i)<body[^>]*>`)
 
-// withPanelHeader embeds the console's header in index.html (proposal 018 §5):
+// withPanelHeader embeds the console's header in index.html:
 // the header bundle in <head>, and its element first in <body>. Both carry the
 // response's nonce placeholder, which serveIndex fills in like the build's own.
 // A page without the tags it needs is returned unchanged.

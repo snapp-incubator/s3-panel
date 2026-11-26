@@ -138,6 +138,41 @@ func TestNoAnswerFailsClosed(t *testing.T) {
 	}
 }
 
+// TestRefusedAppKeyEndsTheLastKnownGood: a 401 or 403 from the console means
+// the app was disabled (its kill switch) or its key revoked. That is not an
+// outage, so a recent yes does not keep the person in for ten more minutes.
+func TestRefusedAppKeyEndsTheLastKnownGood(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		refused := false
+		var calls atomic.Int32
+		c := &clock{t: time.Unix(1_800_000_000, 0)}
+		g := newViewerGate(func(context.Context, string) (control.Viewer, error) {
+			calls.Add(1)
+			if refused {
+				return control.Viewer{}, &control.Error{Status: status, Message: "app disabled"}
+			}
+			return control.Viewer{View: true}, nil
+		})
+		g.now = c.now
+		ctx := context.Background()
+
+		if g.check(ctx, "u-alice") != viewAllowed {
+			t.Fatalf("%d: a viewer was refused", status)
+		}
+		refused = true
+		c.advance(61 * time.Second)
+		if g.check(ctx, "u-alice") != viewDenied {
+			t.Errorf("%d: a refused app key was read as an outage and the last yes kept", status)
+		}
+		// The refusal is cached like a "no", so a disabled app does not ask the
+		// console on every request.
+		c.advance(30 * time.Second)
+		if g.check(ctx, "u-alice") != viewDenied || calls.Load() != 2 {
+			t.Errorf("%d: %d calls, want 2 and the cached refusal", status, calls.Load())
+		}
+	}
+}
+
 // TestConcurrentChecksAskOnce: the SPA fires several calls together, and they
 // arrive together when the answer goes stale.
 func TestConcurrentChecksAskOnce(t *testing.T) {
@@ -290,7 +325,6 @@ func TestRegisterPanelRegistersTheManifest(t *testing.T) {
 	s.Config.Server.BasePath = "/storage"
 	s.Config.Panel = config.PanelConfig{
 		Enabled: true, APIURL: registry.URL + "/api", APIKey: "app_test",
-		Links: []config.PanelLink{{Resource: "ceph-*|bucket", Path: "/storage/iam/buckets/{name}?region={region}"}},
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -306,7 +340,12 @@ func TestRegisterPanelRegistersTheManifest(t *testing.T) {
 		if len(m.Nav) != 1 || m.Nav[0].Path != "/storage/object-storage/s3-bucket/buckets" {
 			t.Errorf("default nav = %+v", m.Nav)
 		}
-		if len(m.Links) != 1 || m.Links[0].Resource != "ceph-*|bucket" || m.Description == "" || m.Version == "" {
+		// No links configured: bucket links through the resolver.
+		if len(m.Links) != 1 || m.Links[0].Resource != "ceph-*|bucket" ||
+			m.Links[0].Path != "/storage/iam/buckets/{name}?region={region}" {
+			t.Errorf("default links = %+v", m.Links)
+		}
+		if m.Description == "" || m.Version == "" {
 			t.Errorf("manifest = %+v", m)
 		}
 	case <-time.After(5 * time.Second):
@@ -361,7 +400,7 @@ func TestPanelOffChangesNothing(t *testing.T) {
 	}
 }
 
-// TestPagesEmbedTheConsoleHeader (proposal 018 §5): with the panel on, the
+// TestPagesEmbedTheConsoleHeader: with the panel on, the
 // header bundle loads from the console's path under this response's nonce, and
 // its element comes first in <body>. Off, the page is the build's own.
 func TestPagesEmbedTheConsoleHeader(t *testing.T) {
