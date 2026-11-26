@@ -1,7 +1,8 @@
 name: Release
 
-# Triggered by a semver tag (e.g. v1.2.3). Publishes the backend and frontend
-# container images and the Helm chart (as an OCI artifact) to GHCR.
+# Triggered by a semver tag (e.g. v1.2.3). Publishes the container image (at
+# the root, and a "-storage" variant served under /storage) and the Helm chart
+# (as an OCI artifact) to GHCR.
 on:
   push:
     tags:
@@ -20,6 +21,19 @@ env:
 jobs:
   image:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # The panel at the root of its host.
+          - suffix: ""
+            base_path: ""
+            latest: true
+          # The panel under /storage of a host it shares with other apps
+          # (server.base_path = "/storage"). The SPA's asset URLs are fixed at
+          # build time, so this is its own image, tagged <version>-storage.
+          - suffix: "-storage"
+            base_path: "/storage"
+            latest: false
     steps:
       - uses: actions/checkout@v7
       - name: Resolve version
@@ -37,9 +51,10 @@ jobs:
           push: true
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
+            VITE_BASE_PATH=${{ matrix.base_path }}
           tags: |
-            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/s3-panel:${{ steps.version.outputs.value }}
-            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/s3-panel:latest
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/s3-panel:${{ steps.version.outputs.value }}${{ matrix.suffix }}
+            ${{ matrix.latest && format('{0}/{1}/s3-panel:latest', env.REGISTRY, env.NAMESPACE) || '' }}
 
   chart:
     runs-on: ubuntu-latest
