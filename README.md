@@ -83,6 +83,7 @@ single image (which serves both the API and the embedded frontend):
 | Artifact | Reference |
 | --- | --- |
 | Image (API + UI) | `ghcr.io/snapp-incubator/s3-panel:<version>` |
+| Image served under `/storage` | `ghcr.io/snapp-incubator/s3-panel:<version>-storage` |
 | Helm chart (OCI) | `oci://ghcr.io/snapp-incubator/charts/s3-panel` |
 
 Install from the OCI registry:
@@ -99,8 +100,9 @@ GitHub Actions (`.github/workflows`):
 - **CI** (`ci.yml`) — **lint** (golangci-lint, Biome, `helm lint --strict`) and **test**
   (`go test`, plus chart manifest validation with kubeconform), then **build** the single
   image. The build job runs only after lint and test pass.
-- **Release** (`release.yml`) — on a semver tag, builds and pushes the image and the Helm
-  chart (OCI) to GHCR.
+- **Release** (`release.yml`) — on a semver tag, builds and pushes the images and the Helm
+  chart (OCI) to GHCR. The `-storage` image is built with `VITE_BASE_PATH=/storage`, for a
+  panel with `server.base_path = "/storage"`; the SPA's asset paths are fixed at build time.
 
 ## API
 
