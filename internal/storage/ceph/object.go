@@ -309,27 +309,33 @@ func (c CephObjectStorage) ObjectUpload(serverAdminConfig config.ObjectStorageCo
 	}
 	defer func() { _ = src.Close() }()
 
-	bs := make([]byte, file.Size)
-	if _, errReadBuf := io.ReadFull(src, bs); errReadBuf != nil {
-		return storage.ObjectUploadResponse{}, translateError(errReadBuf)
-	}
-
 	const maxPartSize = int64(6 * 1024 * 1024)
+	buf := make([]byte, maxPartSize)
 	var curr, partLength int64
 	var remaining = file.Size
 	var completedParts []types.CompletedPart
 	var partNumber int32 = 1
 	for curr = 0; remaining != 0; curr += partLength {
 		partNum := partNumber
-		if remaining < maxPartSize {
-			partLength = remaining
-		} else {
-			partLength = maxPartSize
+		partLength = min(remaining, maxPartSize)
+
+		chunk := buf[:partLength]
+		if _, errRead := io.ReadFull(src, chunk); errRead != nil {
+			aboInput := &s3.AbortMultipartUploadInput{
+				Bucket:   aws.String(meta.Bucket),
+				Key:      aws.String(objectKey),
+				UploadId: respMP.UploadId,
+			}
+			_, aboErr := client.AbortMultipartUpload(context.TODO(), aboInput)
+			if aboErr != nil {
+				return storage.ObjectUploadResponse{}, translateError(aboErr)
+			}
+			return storage.ObjectUploadResponse{}, translateError(errRead)
 		}
 
-		checkSumCRC32 := computeCRC32(bs[curr : curr+partLength])
+		checkSumCRC32 := computeCRC32(chunk)
 		partInput := &s3.UploadPartInput{
-			Body:              bytes.NewReader(bs[curr : curr+partLength]),
+			Body:              bytes.NewReader(chunk),
 			Bucket:            aws.String(meta.Bucket),
 			Key:               aws.String(objectKey),
 			PartNumber:        &partNum,
