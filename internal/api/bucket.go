@@ -283,7 +283,7 @@ func (s *Server) HandleBucketDelete() echo.HandlerFunc {
 		deleteBucket, errBucketDelete := s.store.BucketDelete(s.Config.ObjectStorage, req)
 		if errBucketDelete.Message != nil {
 			s.logger.Error(errBucketDelete.Message.Error())
-			return c.JSON(errBucketDelete.Code, storage.OperationErrWithMsg{Message: err.Error()})
+			return c.JSON(errBucketDelete.Code, storage.OperationErrWithMsg{Message: errBucketDelete.Message.Error()})
 		}
 		return c.JSON(http.StatusOK, deleteBucket)
 	}
